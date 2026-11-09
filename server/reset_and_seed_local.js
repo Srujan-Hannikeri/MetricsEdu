@@ -110,6 +110,28 @@ function assertSafeTarget(uri) {
   }
 }
 
+function assertSafeRemoteSeedTarget(uri) {
+  if (process.env.VERCEL) {
+    throw new Error('Run the remote seed command from your local computer, not a Vercel Function.');
+  }
+  if (!uri) throw new Error('Set MONGO_URI to the hosted MongoDB connection string.');
+
+  let parsed;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    throw new Error('MONGO_URI could not be parsed. Copy the Atlas driver URI and URL-encode any special characters in the username or password (for example, @ as %40).');
+  }
+
+  const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+  if (!['mongodb:', 'mongodb+srv:'].includes(parsed.protocol) ||
+      localHosts.has(parsed.hostname.toLowerCase()) ||
+      databaseName !== DATABASE_NAME) {
+    throw new Error(`Refusing remote seed: use a hosted MongoDB URI that explicitly targets "${DATABASE_NAME}".`);
+  }
+}
+
 function makeCohorts() {
   const cohorts = [];
   for (const branch of INSTITUTIONS.institute.branches) {
@@ -580,6 +602,13 @@ async function insertInBatches(Model, documents, batchSize = 1000) {
   }
 }
 
+async function deleteSeedDocuments(Model, documents, batchSize = 1000) {
+  for (let offset = 0; offset < documents.length; offset += batchSize) {
+    const ids = documents.slice(offset, offset + batchSize).map(document => document._id);
+    await Model.deleteMany({ _id: { $in: ids } });
+  }
+}
+
 async function verifyDataset(dataset) {
   const expectedStudentCount = dataset.cohortSpecs.length * STUDENTS_PER_COHORT;
   const [userCount, courseCount, timetableCount, semesterCount, sessionCount, studentsWithImages] = await Promise.all([
@@ -617,7 +646,12 @@ async function verifyDataset(dataset) {
 
 async function main() {
   const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/metricsedu';
-  assertSafeTarget(uri);
+  const remoteSeed = process.argv.includes('--confirm-seed-remote');
+  if (remoteSeed) {
+    assertSafeRemoteSeedTarget(process.env.MONGO_URI);
+  } else {
+    assertSafeTarget(uri);
+  }
 
   if (process.argv.includes('--dry-run')) {
     const passwordHashes = {
@@ -627,7 +661,9 @@ async function main() {
     };
     const dataset = makeDataset(passwordHashes);
     validateDataset(dataset);
-    console.log(`Target: loopback MongoDB database "${DATABASE_NAME}"`);
+    console.log(remoteSeed
+      ? `Target: hosted MongoDB database "${DATABASE_NAME}" (no connection made)`
+      : `Target: loopback MongoDB database "${DATABASE_NAME}"`);
     console.log(`Students: ${dataset.students.length}`);
     console.log(`Teachers: ${dataset.teachers.length}`);
     console.log(`Semester courses: ${dataset.courses.length}`);
@@ -639,8 +675,82 @@ async function main() {
     return;
   }
 
+  if (process.argv.includes('--confirm-reset') && remoteSeed) {
+    throw new Error('Choose either --confirm-reset or --confirm-seed-remote, not both.');
+  }
+
+  if (remoteSeed) {
+    const passwordHashes = {
+      admin: await bcrypt.hash('adminpassword123', 10),
+      teacher: await bcrypt.hash('teacherpassword123', 10),
+      student: await bcrypt.hash('studentpassword123', 10)
+    };
+    const dataset = makeDataset(passwordHashes);
+    validateDataset(dataset);
+
+    await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+    const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+    if (mongoose.connection.name !== DATABASE_NAME ||
+        localHosts.has(mongoose.connection.host.toLowerCase())) {
+      throw new Error('Connected database did not pass the hosted metricsedu safety check.');
+    }
+
+    const db = mongoose.connection.db;
+    const collectionNames = (await db.listCollections({}, { nameOnly: true }).toArray())
+      .map(collection => collection.name)
+      .filter(name => !name.startsWith('system.'));
+    for (const collectionName of collectionNames) {
+      const count = await db.collection(collectionName).countDocuments({});
+      if (count > 0) {
+        throw new Error(`Refusing to seed a non-empty database: collection "${collectionName}" contains ${count} documents. Use a new empty metricsedu database.`);
+      }
+    }
+
+    let counts;
+    try {
+      await Promise.all([
+        User.init(), Course.init(), Timetable.init(), AttendanceSession.init(), Semester.init()
+      ]);
+      await insertInBatches(User, [...dataset.admins, ...dataset.teachers, ...dataset.students]);
+      await insertInBatches(Semester, dataset.semesters);
+      await insertInBatches(Course, dataset.courses);
+      await insertInBatches(Timetable, dataset.timetables);
+      await insertInBatches(AttendanceSession, dataset.attendanceSessions);
+      counts = await verifyDataset(dataset);
+    } catch (error) {
+      try {
+        await Promise.all([
+          deleteSeedDocuments(User, [...dataset.admins, ...dataset.teachers, ...dataset.students]),
+          deleteSeedDocuments(Semester, dataset.semesters),
+          deleteSeedDocuments(Course, dataset.courses),
+          deleteSeedDocuments(Timetable, dataset.timetables),
+          deleteSeedDocuments(AttendanceSession, dataset.attendanceSessions)
+        ]);
+      } catch (cleanupError) {
+        throw new Error(`Remote seed failed (${error.message}) and cleanup also failed (${cleanupError.message}). Inspect the target database before retrying.`);
+      }
+      throw new Error(`Remote seed failed; inserted demo documents were rolled back. ${error.message}`);
+    }
+
+    console.log('Hosted MetricsEdu demo dataset seeded successfully.');
+    console.log(JSON.stringify({
+      database: DATABASE_NAME,
+      counts,
+      studentsPerCohort: STUDENTS_PER_COHORT,
+      teachersPerDepartment: TEACHERS_PER_DEPARTMENT,
+      admins: dataset.admins.map(({ adminId, email, institutionType }) => ({ adminId, email, institutionType })),
+      demoPasswords: {
+        admin: 'adminpassword123',
+        teacher: 'teacherpassword123',
+        student: 'studentpassword123'
+      },
+      warning: 'Change all demo passwords after the first login. Seeded image paths refer to local demo assets.'
+    }, null, 2));
+    return;
+  }
+
   if (!process.argv.includes('--confirm-reset')) {
-    throw new Error('Pass --confirm-reset to explicitly clear and seed the local metricsedu database.');
+    throw new Error('Pass --confirm-reset to reset the local metricsedu database, or --confirm-seed-remote to seed an empty hosted metricsedu database.');
   }
 
   const passwordHashes = {

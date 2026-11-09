@@ -94,7 +94,7 @@ After pulling backend route changes, restart the API process before refreshing t
 
 ## Local Development Dataset
 
-The reset script is deliberately limited to the loopback MongoDB database named `metricsedu`. It refuses production mode, remote hosts, and unexpected collections. It drops and recreates the app collections, so use it only when you intend to replace the local dataset.
+The reset mode is deliberately limited to the loopback MongoDB database named `metricsedu`. It refuses production mode, remote hosts, and unexpected collections. It drops and recreates the app collections, so use it only when you intend to replace the local dataset.
 
 ```powershell
 node server/reset_and_seed_local.js --dry-run
@@ -102,6 +102,27 @@ node server/reset_and_seed_local.js --confirm-reset
 ```
 
 The seeded demo passwords, repeated local portrait images, and simulated attendance records are for local development only. Students must register their own face before biometric attendance is used; replace the demo credentials and records before any production use.
+
+### Seed a new hosted MongoDB database
+
+The same generator can seed the full demo dataset into a hosted database, but only when the target `metricsedu` database is empty. It never drops or overwrites remote collections. First allow your computer's current IP in MongoDB Atlas Network Access, and create a database/user with a strong password. Ensure the Atlas connection URI names the database explicitly as `/metricsedu` (before any `?` options). From PowerShell, run:
+
+```powershell
+$secureUri = Read-Host "Paste the rotated Atlas connection URI" -AsSecureString
+$uriPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUri)
+try {
+  $env:MONGO_URI = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($uriPointer)
+  node server/reset_and_seed_local.js --dry-run --confirm-seed-remote
+  if ($LASTEXITCODE -ne 0) { throw "Dataset validation failed; no data was written." }
+  node server/reset_and_seed_local.js --confirm-seed-remote
+  if ($LASTEXITCODE -ne 0) { throw "Dataset seed failed; inspect the reported database error." }
+} finally {
+  Remove-Item Env:MONGO_URI -ErrorAction SilentlyContinue
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($uriPointer)
+}
+```
+
+The dataset includes 4 admins, 600 teachers (30 per department), 26,400 students (200 per cohort), courses, timetables, semester configurations, and demo attendance. Demo passwords are `adminpassword123`, `teacherpassword123`, and `studentpassword123`; change them immediately after seeding. The demo images point to local `/uploads` assets and are not automatically copied to Vercel Blob, so upload production images separately. Do not run `--confirm-reset` with a hosted URI.
 
 ## Admin Registration
 
