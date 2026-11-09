@@ -724,7 +724,7 @@ async function verifyDataset(dataset) {
 async function main() {
   const remoteSeed = process.argv.includes('--confirm-seed-remote');
   const uri = remoteSeed
-    ? normalizeMongoUri(process.env.MONGO_URI)
+    ? normalizeMongoUri(process.env.MONGO_URI || process.env.MONGODB_URI)
     : process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/metricsedu';
   if (remoteSeed) {
     process.env.MONGO_URI = uri;
@@ -768,7 +768,10 @@ async function main() {
     const dataset = makeDataset(passwordHashes);
     validateDataset(dataset);
 
-    await mongoose.connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 15000 });
+    await mongoose.connect(process.env.MONGO_URI, {
+      dbName: DATABASE_NAME,
+      serverSelectionTimeoutMS: 15000
+    });
     const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
     if (mongoose.connection.name !== DATABASE_NAME ||
         localHosts.has(mongoose.connection.host.toLowerCase())) {

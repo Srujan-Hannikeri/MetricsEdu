@@ -105,7 +105,7 @@ The seeded demo passwords, repeated local portrait images, and simulated attenda
 
 ### Seed a new hosted MongoDB database
 
-The same generator can seed the full demo dataset into a hosted database, but only when the target `metricsedu` database is empty. It never drops or overwrites remote collections. First allow your computer's current IP in MongoDB Atlas Network Access, and create a database/user with a strong password. The seeder accepts the Atlas driver URI with or without the `/metricsedu` path and URL-encodes special characters in the username/password. From PowerShell, run:
+The same generator can seed the full demo dataset into a hosted database, but only when the target `metricsedu` database is empty. It never drops or overwrites remote collections. The app and seeder explicitly select the `metricsedu` database, even if the URI has no database path. First allow your computer's current IP in MongoDB Atlas Network Access, and create a database/user with a strong password. The seeder accepts the Atlas driver URI with or without the `/metricsedu` path and URL-encodes special characters in the username/password. From PowerShell, run:
 
 ```powershell
 $secureUri = Read-Host "Paste the rotated Atlas connection URI" -AsSecureString

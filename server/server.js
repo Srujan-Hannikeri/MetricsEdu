@@ -14,6 +14,7 @@ const campusRoutes = require('./routes/campusRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const DATABASE_NAME = 'metricsedu';
 
 // Middlewares
 app.use(cors());
@@ -35,10 +36,16 @@ app.get('/api/health', (req, res) => {
 
 let databaseConnection;
 const connectDatabase = async () => {
-  if (mongoose.connection.readyState === 1) return mongoose.connection;
+  if (mongoose.connection.readyState === 1 && mongoose.connection.name === DATABASE_NAME) {
+    return mongoose.connection;
+  }
+  if (mongoose.connection.readyState === 1) {
+    await mongoose.disconnect();
+    databaseConnection = null;
+  }
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is required to connect to the database.');
   if (!databaseConnection) {
-    databaseConnection = mongoose.connect(process.env.MONGO_URI).catch(error => {
+    databaseConnection = mongoose.connect(process.env.MONGO_URI, { dbName: DATABASE_NAME }).catch(error => {
       databaseConnection = null;
       throw error;
     });
