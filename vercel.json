@@ -4,6 +4,7 @@
   "buildCommand": "cd client && npm run build",
   "outputDirectory": "client/dist",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "/api?__metricsedu_route=:path*" },
     { "source": "/:path((?!api/).*)", "destination": "/index.html" }
   ]
 }
