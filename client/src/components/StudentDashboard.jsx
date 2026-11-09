@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, Camera, CheckCircle2, AlertTriangle, Clock, 
-  BookOpen, ShieldCheck, Upload, RefreshCw, UserCheck, AlertCircle, ChevronDown, ChevronUp, Calendar
+  BookOpen, ShieldCheck, Upload, RefreshCw, UserCheck, AlertCircle, ChevronDown, ChevronUp, Calendar, Megaphone
 } from 'lucide-react';
 import { api } from '../services/api';
-import { detectStudentFace } from '../utils/faceUtils';
 import TimetableTable from './TimetableTable';
+import AcademicHub from './AcademicHub';
 
 export default function StudentDashboard({ user, onUserUpdated }) {
   const [activeTab, setActiveTab] = useState('attendance'); // 'attendance' | 'timetable'
@@ -46,7 +46,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
     try {
       const div = user?.division || user?.section || 'C';
       const sem = user?.semester || 5;
-      const data = await api.getTimetables(div, sem);
+      const data = await api.getTimetables(div, sem, null, null, null, user?.institutionType || 'institute');
       setTimetableSlots(data.slots || []);
     } catch (err) {
       console.error('Error loading student timetable:', err);
@@ -86,6 +86,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
       });
 
       // Detect real face and extract 128-d descriptor
+      const { detectStudentFace } = await import('../utils/faceUtils');
       let faceResult = await detectStudentFace(img);
 
       let descriptor = [];
@@ -107,7 +108,9 @@ export default function StudentDashboard({ user, onUserUpdated }) {
 
       const formData = new FormData();
       if (selectedFaceFile) {
-        formData.append('facePhoto', selectedFaceFile);
+        const profileImageUrl = await api.uploadBlob(selectedFaceFile, 'students');
+        if (profileImageUrl) formData.append('profileImageUrl', profileImageUrl);
+        else formData.append('facePhoto', selectedFaceFile);
       }
       formData.append('faceDescriptor', JSON.stringify(descriptor));
 
@@ -143,6 +146,11 @@ export default function StudentDashboard({ user, onUserUpdated }) {
   const isPhotoPresent = !!(user?.faceRegistered && user?.profileImage);
   const confidenceScore = metrics?.lastConfidenceScore ?? 95;
   const isConfidenceBelow40 = confidenceScore < 40 || metrics?.photoUpdateRequired;
+  const studentCohortLabel = user?.institutionType === 'school'
+    ? user?.standard || 'School'
+    : user?.institutionType === 'pu_college'
+      ? user?.pucYear || 'PUC'
+      : `Semester ${user?.semester || '—'}`;
 
   // The upload box only appears if:
   // 1. Photo is NOT registered yet OR
@@ -240,8 +248,8 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         </div>
       </div>
 
-      {/* Student View Navigation Tabs (Attendance Breakdown vs Weekly Timetable) */}
-      <div className="flex bg-[#071b34] p-1.5 rounded-2xl border border-[#133966] shadow-md self-start gap-2">
+      {/* Student navigation */}
+      <div className="flex flex-wrap bg-[#071b34] p-1.5 rounded-2xl border border-[#133966] shadow-md self-start gap-2">
         <button
           type="button"
           onClick={() => setActiveTab('attendance')}
@@ -265,6 +273,42 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         >
           <Calendar className="w-4 h-4" />
           Weekly Class Timetable Matrix
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('calendar')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === 'calendar'
+              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          Academic Calendar
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('announcements')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === 'announcements'
+              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Megaphone className="w-4 h-4" />
+          Announcements
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('materials')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === 'materials'
+              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          Study Materials
         </button>
       </div>
 
@@ -418,7 +462,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFaceFileChange}
-                accept="image/*"
+                accept=".jpg,.jpeg,.png,.webp"
                 className="hidden"
               />
             </div>
@@ -611,6 +655,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         )}
       </div>
 
+      <AcademicHub user={user} page="calendar" />
     </div>
   )}
 
@@ -635,7 +680,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
             Division {user?.division || user?.section || 'C'}
           </span>
           <span className="px-3 py-1.5 rounded-xl bg-[#040d1a] text-cyan-200 border border-[#133966] font-bold">
-            {user?.institutionType === 'school' ? (user?.standard || '10th Std') : `Semester ${user?.semester || 5}`}
+            {studentCohortLabel}
           </span>
         </div>
       </div>
@@ -646,8 +691,10 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         <TimetableTable
           division={user?.division || user?.section || 'C'}
           semester={user?.semester || 5}
-          standard={user?.standard || ''}
-          institutionType={user?.institutionType || 'college'}
+          standard={user?.standard || user?.pucYear || ''}
+          institutionType={user?.institutionType || 'institute'}
+          branch={user?.branch || user?.department || ''}
+          pucDept={user?.pucDept || user?.department || ''}
           classroom={user?.division === 'C' ? 'Class Room: AS-11' : 'Smart Hall LH-301'}
           coordinator="Prof. Nandini C.V"
           slots={timetableSlots}
@@ -656,6 +703,10 @@ export default function StudentDashboard({ user, onUserUpdated }) {
       )}
     </div>
   )}
+
+  {activeTab === 'calendar' && <AcademicHub user={user} page="calendar" />}
+  {activeTab === 'announcements' && <AcademicHub user={user} page="announcements" />}
+  {activeTab === 'materials' && <AcademicHub user={user} page="materials" />}
 
     </div>
   );

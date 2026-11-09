@@ -1,154 +1,162 @@
+import { upload } from '@vercel/blob/client';
+
 const API_BASE = '/api';
 
 export const getToken = () => localStorage.getItem('metricsedu_token');
 export const setToken = (token) => localStorage.setItem('metricsedu_token', token);
 export const removeToken = () => localStorage.removeItem('metricsedu_token');
 
+export async function uploadBlob(file, category) {
+  if (import.meta.env.VITE_USE_VERCEL_BLOB !== 'true') return null;
+  const token = getToken();
+  if (!token) throw new Error('Sign in before uploading a file.');
+  const blob = await upload(`${category}/${file.name}`, file, {
+    access: 'public',
+    handleUploadUrl: '/api/campus/blob-upload',
+    clientPayload: category,
+    headers: { Authorization: `Bearer ${token}` },
+    multipart: file.size > 5 * 1024 * 1024
+  });
+  return blob.url;
+}
+
 export async function request(endpoint, options = {}) {
   const token = getToken();
   const headers = { ...options.headers };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  // If body is not FormData, default to JSON
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers
-  });
-
+  const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
-    throw new Error(data.message || `Request failed with status ${response.status}`);
+    const message = data.message || (response.status === 404
+      ? 'API route not found. Restart the backend server to load the latest routes.'
+      : `Request failed with status ${response.status}`);
+    throw new Error(message);
   }
-
   return data;
 }
 
 export const api = {
-  // Auth
-  register: (payload) =>
-    request('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }),
-
-  login: (identifier, password, role) =>
-    request('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ identifier, password, role })
-    }),
-
-  forgotPassword: (email) =>
-    request('/auth/forgot-password', {
-      method: 'POST',
-      body: JSON.stringify({ email })
-    }),
-
-  verifyResetOTP: (email, otp) =>
-    request('/auth/verify-otp', {
-      method: 'POST',
-      body: JSON.stringify({ email, otp })
-    }),
-
-  resetPassword: (email, otp, newPassword) =>
-    request('/auth/reset-password', {
-      method: 'POST',
-      body: JSON.stringify({ email, otp, newPassword })
-    }),
-
+  // ─── Auth ──────────────────────────────────────────────────────────────────
+  register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+  login: (identifier, password, role) => request('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, role }) }),
+  forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  verifyResetOTP: (email, otp) => request('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email, otp }) }),
+  resetPassword: (email, otp, newPassword) => request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, otp, newPassword }) }),
   getMe: () => request('/auth/me'),
 
-  // Teacher Endpoints
+  // ─── Teacher / Attendance ──────────────────────────────────────────────────
   getTeacherCourses: () => request('/attendance/courses'),
-  getCourseStudents: (courseId) => request(`/attendance/course/${courseId}/students`),
-  submitClassroomAttendance: (formData) =>
-    request('/attendance/process-photo', {
-      method: 'POST',
-      body: formData // multipart/form-data
-    }),
-  getTeacherSessions: (courseId) =>
-    request(`/attendance/sessions${courseId ? `?courseId=${courseId}` : ''}`),
+  getCourseStudents: (courseId, division) => {
+    const query = division ? `?division=${encodeURIComponent(division)}` : '';
+    return request(`/attendance/course/${courseId}/students${query}`);
+  },
+  submitClassroomAttendance: (formData) => request('/attendance/process-photo', { method: 'POST', body: formData }),
+  getTeacherSessions: (courseId) => request(`/attendance/sessions${courseId ? `?courseId=${courseId}` : ''}`),
   getSessionById: (sessionId) => request(`/attendance/session/${sessionId}`),
   updateStudentRecord: (sessionId, studentId, status) =>
-    request(`/attendance/session/${sessionId}/student/${studentId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status })
-    }),
+    request(`/attendance/session/${sessionId}/student/${studentId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   getExportCsvUrl: (sessionId) => `${API_BASE}/attendance/session/${sessionId}/export-csv`,
+  checkAttendanceWindow: (courseId) => request(`/attendance/window-check/${courseId}`),
 
-  // Student Endpoints
+  // ─── Teacher timetable ─────────────────────────────────────────────────────
+  getTeacherTimetable: (teacherId) => request(`/admin/timetables/teacher/${teacherId}`),
+  getTeacherActiveSlot: (teacherId) => request(`/admin/timetables/teacher/${teacherId}/active-slot`),
+
+  // ─── Student ───────────────────────────────────────────────────────────────
   getStudentDashboard: () => request('/student/dashboard'),
-  registerStudentFace: (formData) =>
-    request('/student/register-face', {
-      method: 'POST',
-      body: formData // multipart/form-data
-    }),
+  registerStudentFace: (formData) => request('/student/register-face', { method: 'POST', body: formData }),
 
-  // Admin Endpoints
+  // ─── Admin: stats & users ─────────────────────────────────────────────────
   getAdminStats: () => request('/admin/stats'),
   getUsers: (role, paramsObj = {}) => {
     const params = new URLSearchParams();
     if (role) params.append('role', role);
     if (paramsObj.semester) params.append('semester', paramsObj.semester);
     if (paramsObj.standard) params.append('standard', paramsObj.standard);
-    if (paramsObj.institutionType) params.append('institutionType', paramsObj.institutionType);
+    if (paramsObj.branch)   params.append('branch', paramsObj.branch);
+    if (paramsObj.division) params.append('division', paramsObj.division);
+    if (paramsObj.pucYear) params.append('pucYear', paramsObj.pucYear);
+    if (paramsObj.pucDept) params.append('pucDept', paramsObj.pucDept);
+    if (paramsObj.page !== undefined) params.append('page', paramsObj.page);
+    if (paramsObj.limit !== undefined) params.append('limit', paramsObj.limit);
+    if (paramsObj.search) params.append('search', paramsObj.search);
+    // Note: institutionType is now always injected server-side from admin's JWT
     return request(`/admin/users?${params.toString()}`);
   },
-  toggleUserStatus: (userId) =>
-    request(`/admin/users/${userId}/toggle-status`, { method: 'PATCH' }),
-  getCourses: () => request('/admin/courses'),
-  createCourse: (data) =>
-    request('/admin/courses', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    }),
-  assignTeacherToCourse: (courseId, teacherId) =>
-    request('/admin/courses/assign-teacher', {
-      method: 'POST',
-      body: JSON.stringify({ courseId, teacherId })
-    }),
+  toggleUserStatus: (userId) => request(`/admin/users/${userId}/toggle-status`, { method: 'PATCH' }),
 
-  // Timetables
-  getTimetables: (division, semester, day) => {
+  // ─── Admin: courses ────────────────────────────────────────────────────────
+  getCourses: (paramsObj = {}) => {
+    const params = new URLSearchParams();
+    if (paramsObj.branch) params.append('branch', paramsObj.branch);
+    if (paramsObj.semester) params.append('semester', paramsObj.semester);
+    if (paramsObj.institutionType) params.append('institutionType', paramsObj.institutionType);
+    if (paramsObj.standard) params.append('standard', paramsObj.standard);
+    if (paramsObj.pucYear) params.append('pucYear', paramsObj.pucYear);
+    if (paramsObj.pucDept) params.append('pucDept', paramsObj.pucDept);
+    if (paramsObj.section) params.append('section', paramsObj.section);
+    return request(`/admin/courses?${params.toString()}`);
+  },
+  createCourse: (data) => request('/admin/courses', { method: 'POST', body: JSON.stringify(data) }),
+  assignTeacherToCourse: (courseId, teacherId) =>
+    request('/admin/courses/assign-teacher', { method: 'POST', body: JSON.stringify({ courseId, teacherId }) }),
+
+  // ─── Admin: timetable ─────────────────────────────────────────────────────
+  getTimetables: (division, semester, day, branch, standard, institutionType, pucYear, pucDept) => {
     const params = new URLSearchParams();
     if (division) params.append('division', division);
     if (semester) params.append('semester', semester);
     if (day) params.append('day', day);
+    if (branch) params.append('branch', branch);
+    if (standard) params.append('standard', standard);
+    if (institutionType) params.append('institutionType', institutionType);
+    if (pucYear) params.append('pucYear', pucYear);
+    if (pucDept) params.append('pucDept', pucDept);
     return request(`/admin/timetables?${params.toString()}`);
   },
-  createTimetableEntry: (data) =>
-    request('/admin/timetables', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    }),
-  updateTimetableEntry: (id, data) =>
-    request(`/admin/timetables/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data)
-    }),
-  deleteTimetableEntry: (id) =>
-    request(`/admin/timetables/${id}`, {
-      method: 'DELETE'
-    }),
-  autoGenerateTimetable: (data) =>
-    request('/admin/timetables/auto-generate', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    }),
+  createTimetableEntry: (data) => request('/admin/timetables', { method: 'POST', body: JSON.stringify(data) }),
+  updateTimetableEntry: (id, data) => request(`/admin/timetables/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTimetableEntry: (id) => request(`/admin/timetables/${id}`, { method: 'DELETE' }),
+  autoGenerateTimetable: (data) => request('/admin/timetables/auto-generate', { method: 'POST', body: JSON.stringify(data) }),
 
-  // Division Allocator
-  allocateDivisions: (data) =>
-    request('/admin/divisions/allocate', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    }),
+  // ─── Admin: division allocator ────────────────────────────────────────────
+  allocateDivisions: (data) => request('/admin/divisions/allocate', { method: 'POST', body: JSON.stringify(data) }),
 
-  seedDemoData: () => request('/admin/seed', { method: 'POST' })
+  // ─── Faculty tracker ──────────────────────────────────────────────────────
+  getFacultyTracker: () => request('/admin/faculty-tracker'),
+
+  // ─── Semester management ──────────────────────────────────────────────────
+  getInstitutionConfig: () => request('/semesters/config'),
+  getBranchesMeta: () => request('/semesters/config'),
+  getSemesters: (paramsObj = {}) => {
+    const params = new URLSearchParams();
+    if (paramsObj.branch) params.append('branch', paramsObj.branch);
+    if (paramsObj.semesterNumber) params.append('semesterNumber', paramsObj.semesterNumber);
+    if (paramsObj.standard) params.append('standard', paramsObj.standard);
+    if (paramsObj.pucYear) params.append('pucYear', paramsObj.pucYear);
+    if (paramsObj.pucDept) params.append('pucDept', paramsObj.pucDept);
+    return request(`/semesters?${params.toString()}`);
+  },
+  createSemester: (data) => request('/semesters', { method: 'POST', body: JSON.stringify(data) }),
+  updateSemester: (id, data) => request(`/semesters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  lockSemester: (id) => request(`/semesters/${id}/lock`, { method: 'POST' }),
+  unlockSemester: (id) => request(`/semesters/${id}/unlock`, { method: 'POST' }),
+  deleteSemester: (id) => request(`/semesters/${id}`, { method: 'DELETE' }),
+  addSubjectsToSemester: (id, subjects) =>
+    request(`/semesters/${id}/subjects`, { method: 'POST', body: JSON.stringify({ subjects }) }),
+  removeSubjectFromSemester: (id, subjectCode, division) =>
+    request(`/semesters/${id}/subjects/${subjectCode}?division=${encodeURIComponent(division || '')}`, { method: 'DELETE' }),
+
+  // ─── Academic calendar and learning posts ────────────────────────────────
+  getAcademicEvents: () => request('/campus/events'),
+  createAcademicEvent: (data) => request('/campus/events', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAcademicEvent: (eventId) => request(`/campus/events/${eventId}`, { method: 'DELETE' }),
+  getLearningPosts: () => request('/campus/posts'),
+  createLearningPost: (formData) => request('/campus/posts', { method: 'POST', body: formData }),
+  deleteLearningPost: (postId) => request(`/campus/posts/${postId}`, { method: 'DELETE' })
 };

@@ -27,27 +27,47 @@ const userSchema = new mongoose.Schema({
   adminId: {
     type: String,
     sparse: true,
+    unique: true,
     trim: true
   },
   teacherId: {
     type: String,
     sparse: true,
+    unique: true,
     trim: true
   },
   usn: {
     type: String,
     sparse: true,
+    unique: true,
     trim: true,
     uppercase: true
   },
-  // Institution Type: College / University vs School
+  // Institution Type: institute | school | pu_college | diploma
+  // 'college' kept as legacy alias for 'institute'
   institutionType: {
     type: String,
-    enum: ['college', 'school'],
-    default: 'college'
+    enum: ['institute', 'school', 'pu_college', 'diploma', 'college'],
+    default: 'institute'
   },
-  // For Schools: Standard / Class (e.g. 1st Std to 12th Std)
+  createdByAdmin: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  // For Schools: Standard (1st–10th Std)
   standard: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  // For PU College: '1st PUC' | '2nd PUC'
+  pucYear: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  pucDept: {
     type: String,
     trim: true,
     default: ''
@@ -74,9 +94,14 @@ const userSchema = new mongoose.Schema({
     trim: true,
     default: 'Computer Science & Engineering'
   },
+  branch: {
+    type: String,
+    trim: true,
+    default: 'Computer Science & Engineering'
+  },
   semester: {
     type: Number,
-    default: 6
+    default: null
   },
   section: {
     type: String,
@@ -130,8 +155,14 @@ const userSchema = new mongoose.Schema({
   }
 });
 
+userSchema.index({ createdByAdmin: 1, institutionType: 1, role: 1, branch: 1, semester: 1, division: 1 });
+userSchema.index({ createdByAdmin: 1, institutionType: 1, role: 1, standard: 1, division: 1 });
+userSchema.index({ createdByAdmin: 1, institutionType: 1, role: 1, pucYear: 1, pucDept: 1, division: 1 });
+userSchema.index({ createdByAdmin: 1, institutionType: 1, role: 1, usn: 1, name: 1, createdAt: -1 });
+
 // Pre-save hook to hash password if modified
 userSchema.pre('save', async function () {
+  if (this.role === 'teacher') this.semester = null;
   if (!this.isModified('password')) return;
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);

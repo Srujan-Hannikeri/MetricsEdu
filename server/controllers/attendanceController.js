@@ -1,19 +1,153 @@
 const AttendanceSession = require('../models/AttendanceSession');
 const Course = require('../models/Course');
 const User = require('../models/User');
+const Timetable = require('../models/Timetable');
 const faceEngine = require('../services/faceEngine');
+const {
+  getInstitutionTypeFilter,
+  getTenantAdminId,
+  isSameInstitution,
+  normalizeInstitutionType
+} = require('../config/institutions');
+const { saveUploadedFile } = require('../services/uploadService');
 
-// Get list of courses assigned to the logged-in teacher
+// Helper: parse time string to minutes
+function parseTimeToMinutes(t) {
+  if (!t) return 0;
+  let str = t.trim().toLowerCase();
+  const isPM = str.includes('pm');
+  const isAM = str.includes('am');
+  str = str.replace(/[ap]m/g, '').trim();
+  const parts = str.split(':');
+  let h = parseInt(parts[0], 10) || 0;
+  let m = parseInt(parts[1], 10) || 0;
+  if (isPM && h < 12) h += 12;
+  if (isAM && h === 12) h = 0;
+  if (!isPM && !isAM && h >= 1 && h <= 6) h += 12;
+  return h * 60 + m;
+}
+
+function getCourseRosterFilter(course, tenantAdminId, institutionType, division) {
+  const filter = {
+    role: 'student',
+    institutionType: getInstitutionTypeFilter(institutionType),
+    createdByAdmin: tenantAdminId
+  };
+  if (institutionType === 'school') {
+    filter.standard = course.standard;
+  } else if (institutionType === 'pu_college') {
+    filter.pucYear = course.pucYear;
+    filter.pucDept = course.pucDept;
+  } else {
+    filter.branch = course.branch;
+    filter.semester = course.semester;
+  }
+
+  const section = (division || course.section || '').toUpperCase();
+  if (section) {
+    filter.section = section;
+    filter.division = section;
+  }
+  if (course.enrolledStudents?.length) {
+    filter._id = {
+      $in: course.enrolledStudents.map(student => student._id || student)
+    };
+  }
+  return filter;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check if a teacher is allowed to take attendance RIGHT NOW
+// Rule: attendance can only be submitted if the timetable has a matching slot
+//       for today's day, and the current time is within [slotStart, slotEnd + 30min].
+// Returns { allowed: bool, slot: TimetableDoc | null, reason: string }
+// ─────────────────────────────────────────────────────────────────────────────
+async function checkAttendanceWindow(teacherId, courseId, timeSlotOverride) {
+  const now = new Date();
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const todayName = dayNames[now.getDay()];
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  // Find ALL timetable slots for this teacher + course + today
+  const todaySlots = await Timetable.find({
+    teacher: teacherId,
+    course: courseId,
+    day: todayName
+  }).populate('course', 'code title');
+
+  if (todaySlots.length === 0) {
+    // No scheduled class for this teacher+course today — locked
+    return {
+      allowed: false,
+      slot: null,
+      reason: `No timetable slot found for this subject on ${todayName}. Attendance can only be taken during scheduled class periods.`
+    };
+  }
+
+  // Check if current time falls in any of today's slots (+ 30 min grace)
+  for (const slot of todaySlots) {
+    const startMin = slot.startMinutes || parseTimeToMinutes(slot.timeSlot.split(/[-–]/)[0]);
+    const endMin = slot.endMinutes || parseTimeToMinutes((slot.timeSlot.split(/[-–]/)[1] || ''));
+    const graceEndMin = endMin + 30;
+
+    if (nowMinutes >= startMin && nowMinutes <= graceEndMin) {
+      return { allowed: true, slot, reason: 'Within scheduled window.' };
+    }
+  }
+
+  // Time is outside all slots
+  const slotTimes = todaySlots.map(s => s.timeSlot).join(', ');
+  return {
+    allowed: false,
+    slot: null,
+    reason: `Current time is outside the scheduled class window(s) for ${todayName}: ${slotTimes}. Attendance window closes 30 minutes after the slot ends.`
+  };
+}
+
+// Get list of courses assigned to the logged-in teacher (from timetable) — scoped to teacher's institution type
 exports.getTeacherCourses = async (req, res) => {
   try {
+    const teacherUser = await User.findById(req.user._id);
     const teacherId = req.user._id;
-    let courses = await Course.find({ teacher: teacherId }).populate('enrolledStudents', 'name usn department semester faceRegistered profileImage');
-    
-    // If no course explicitly assigned yet, find courses by department or provide all active courses
-    if (courses.length === 0) {
-      courses = await Course.find().populate('enrolledStudents', 'name usn department semester faceRegistered profileImage');
+    const instType = teacherUser?.institutionType || 'institute';
+    const tenantAdminId = getTenantAdminId(teacherUser);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const typeFilter = getInstitutionTypeFilter(instType);
+
+    const assignedCourseIds = await Course.find({
+      teacher: teacherId,
+      createdByAdmin: tenantAdminId
+    }).distinct('_id');
+    let courses = await Course.find({
+      _id: { $in: assignedCourseIds },
+      institutionType: typeFilter
+    })
+      .populate('enrolledStudents', 'name usn department semester branch division faceRegistered profileImage');
+
+    // Also get courses from timetable slots for this teacher
+    const timetableSlotCourseIds = await Timetable.find({
+      teacher: teacherId,
+      course: { $in: assignedCourseIds }
+    }).distinct('course');
+    if (timetableSlotCourseIds.length > 0) {
+      const timetableCourses = await Course.find({
+        _id: { $in: timetableSlotCourseIds },
+        institutionType: typeFilter,
+        createdByAdmin: tenantAdminId
+      }).populate('enrolledStudents', 'name usn department semester branch division faceRegistered profileImage');
+
+      const courseIds = new Set(courses.map(c => c._id.toString()));
+      for (const tc of timetableCourses) {
+        if (!courseIds.has(tc._id.toString())) {
+          courses.push(tc);
+          courseIds.add(tc._id.toString());
+        }
+      }
     }
 
+    // No fallback to all courses — if teacher has nothing assigned, return empty
     return res.json({ success: true, courses });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -24,24 +158,44 @@ exports.getTeacherCourses = async (req, res) => {
 exports.getCourseStudents = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const course = await Course.findById(courseId).populate('enrolledStudents', 'name usn email department semester section faceRegistered profileImage faceDescriptor');
-    
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const course = await Course.findOne({
+      _id: courseId,
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(actorType)
+    });
+
     if (!course) {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
 
-    let students = course.enrolledStudents;
-
-    // If no enrolled students in this specific course record, fallback to students of the same semester/dept
-    if (!students || students.length === 0) {
-      students = await User.find({
-        role: 'student',
-        $or: [
-          { department: course.department, semester: course.semester },
-          { role: 'student' } // include all registered students for ease of classroom testing
-        ]
-      }).select('name usn email department semester section faceRegistered profileImage faceDescriptor');
+    if (req.user.role === 'teacher' && course.teacher?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'You are not assigned to this course.' });
     }
+    if (req.user.role === 'admin' && course.createdByAdmin?.toString() !== tenantAdminId.toString()) {
+      return res.status(403).json({ success: false, message: 'Course access denied.' });
+    }
+
+    const division = String(req.query.division || course.section || '').toUpperCase();
+    if (req.user.role === 'teacher' && division) {
+      const assignedSlot = await Timetable.exists({
+        course: course._id,
+        teacher: req.user._id,
+        division,
+        institutionType: getInstitutionTypeFilter(actorType)
+      });
+      if (!assignedSlot) {
+        return res.status(403).json({ success: false, message: 'You are not assigned to this course in the selected division.' });
+      }
+    }
+
+    const students = await User.find(getCourseRosterFilter(course, tenantAdminId, actorType, division))
+      .select('name usn email department semester section faceRegistered profileImage faceDescriptor')
+      .sort({ usn: 1 });
 
     return res.json({
       success: true,
@@ -49,7 +203,7 @@ exports.getCourseStudents = async (req, res) => {
         id: course._id,
         code: course.code,
         title: course.title,
-        classroom: course.section
+        classroom: division
       },
       students
     });
@@ -61,46 +215,66 @@ exports.getCourseStudents = async (req, res) => {
 // Process Full Classroom Photo and Record Attendance
 exports.processClassroomAttendance = async (req, res) => {
   try {
+    if (req.user.role !== 'teacher') {
+      return res.status(403).json({ success: false, message: 'Only assigned teachers can submit attendance.' });
+    }
+
     const teacherId = req.user._id;
     const { courseId, classroom, sessionDate, notes, timeSlot, teacherPhoto } = req.body;
-    
-    let photoUrl = '';
-    let teacherPhotoUrl = teacherPhoto || '';
-
-    if (req.file) {
-      photoUrl = `/uploads/classroom/${req.file.filename}`;
-    }
-    if (req.files) {
-      if (Array.isArray(req.files)) {
-        req.files.forEach(f => {
-          if (f.fieldname === 'classroomPhoto') photoUrl = `/uploads/classroom/${f.filename}`;
-          if (f.fieldname === 'teacherPhoto') teacherPhotoUrl = `/uploads/classroom/${f.filename}`;
-        });
-      } else {
-        if (req.files['classroomPhoto']) photoUrl = `/uploads/classroom/${req.files['classroomPhoto'][0].filename}`;
-        if (req.files['teacherPhoto']) teacherPhotoUrl = `/uploads/classroom/${req.files['teacherPhoto'][0].filename}`;
-      }
-    }
-    if (!photoUrl) {
-      photoUrl = req.body.classroomPhoto || req.body.samplePhotoUrl || '/classroom_60_divA.jpg';
-    }
 
     if (!courseId) {
       return res.status(400).json({ success: false, message: 'Course ID is required' });
     }
 
-    const course = await Course.findById(courseId);
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const course = await Course.findOne({
+      _id: courseId,
+      teacher: teacherId,
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(actorType)
+    });
     if (!course) {
-      return res.status(404).json({ success: false, message: 'Course not found' });
+      return res.status(403).json({ success: false, message: 'You are not assigned to this course in your institution.' });
+    }
+
+    // ── Timetable-based attendance window enforcement ─────────────────────────
+    const windowCheck = await checkAttendanceWindow(teacherId, courseId, timeSlot);
+    if (!windowCheck.allowed) {
+      return res.status(403).json({
+        success: false,
+        message: windowCheck.reason,
+        locked: true
+      });
+    }
+
+    let photoUrl = '';
+    let teacherPhotoUrl = req.body.teacherPhotoUrl || teacherPhoto || '';
+
+    const uploadedPhotos = [
+      ...(req.file ? [{ ...req.file, fieldname: req.file.fieldname || 'classroomPhoto' }] : []),
+      ...(Array.isArray(req.files)
+        ? req.files
+        : Object.values(req.files || {}).flat())
+    ];
+    for (const file of uploadedPhotos) {
+      const uploadedUrl = await saveUploadedFile(file, 'classroom');
+      if (file.fieldname === 'teacherPhoto') teacherPhotoUrl = uploadedUrl;
+      else photoUrl = uploadedUrl;
+    }
+    if (!photoUrl) {
+      photoUrl = req.body.classroomPhotoUrl || req.body.classroomPhoto || req.body.samplePhotoUrl || '/classroom_60_divA.jpg';
     }
 
     // Fetch enrolled students
-    let enrolledStudents = await User.find({
-      $or: [
-        { _id: { $in: course.enrolledStudents } },
-        { role: 'student' } // fallback to all students if enrollment isn't locked
-      ]
-    });
+    const scheduledDivision = windowCheck.slot?.division || course.section;
+    const enrolledStudents = await User.find(getCourseRosterFilter(course, tenantAdminId, actorType, scheduledDivision));
+    if (enrolledStudents.length === 0) {
+      return res.status(400).json({ success: false, message: 'This course has no students in its assigned section.' });
+    }
 
     // Parse detected faces payload from client (if face-api processed on browser or provided)
     let clientDetections = [];
@@ -165,6 +339,8 @@ exports.processClassroomAttendance = async (req, res) => {
     const newSession = new AttendanceSession({
       course: course._id,
       teacher: teacherId,
+      institutionType: actorType,
+      division: scheduledDivision || '',
       classroom: classroom || 'Class Room: AS-11',
       sessionDate: sessionDate ? new Date(sessionDate) : new Date(),
       timeSlot: timeSlot || '08:30 AM - 09:25 AM',
@@ -217,8 +393,16 @@ exports.getTeacherSessions = async (req, res) => {
   try {
     const teacherId = req.user._id;
     const { courseId } = req.query;
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
 
-    const query = { teacher: teacherId };
+    const teacherCourseIds = await Course.find({
+      teacher: teacherId,
+      createdByAdmin: tenantAdminId
+    }).distinct('_id');
+    const query = { teacher: teacherId, course: { $in: teacherCourseIds } };
     if (courseId) {
       query.course = courseId;
     }
@@ -247,6 +431,18 @@ exports.getSessionById = async (req, res) => {
     if (!session) {
       return res.status(404).json({ success: false, message: 'Attendance session not found' });
     }
+    const tenantAdminId = getTenantAdminId(req.user);
+    const courseOwned = tenantAdminId &&
+      await Course.exists({ _id: session.course?._id, createdByAdmin: tenantAdminId });
+    const canRead = Boolean(courseOwned) && (
+      (req.user.role === 'teacher' &&
+        session.teacher?._id?.toString() === req.user._id.toString() &&
+        isSameInstitution(session, req.user)) ||
+      (req.user.role === 'admin' && isSameInstitution(session, req.user))
+    );
+    if (!canRead) {
+      return res.status(403).json({ success: false, message: 'Attendance session access denied.' });
+    }
 
     return res.json({ success: true, session });
   } catch (error) {
@@ -264,9 +460,23 @@ exports.updateStudentRecord = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Status must be Present or Absent' });
     }
 
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
     const session = await AttendanceSession.findById(sessionId);
     if (!session) {
       return res.status(404).json({ success: false, message: 'Session not found' });
+    }
+    const courseOwned = await Course.exists({ _id: session.course, createdByAdmin: tenantAdminId });
+    const canUpdate = Boolean(courseOwned) && (
+      (req.user.role === 'teacher' &&
+        session.teacher.toString() === req.user._id.toString() &&
+        isSameInstitution(session, req.user)) ||
+      (req.user.role === 'admin' && isSameInstitution(session, req.user))
+    );
+    if (!canUpdate) {
+      return res.status(403).json({ success: false, message: 'Attendance session access denied.' });
     }
 
     const record = session.records.find(r => r.student.toString() === studentId);
@@ -307,6 +517,18 @@ exports.exportAttendanceCSV = async (req, res) => {
     if (!session) {
       return res.status(404).json({ success: false, message: 'Session not found' });
     }
+    const tenantAdminId = getTenantAdminId(req.user);
+    const courseOwned = tenantAdminId &&
+      await Course.exists({ _id: session.course?._id, createdByAdmin: tenantAdminId });
+    const canExport = Boolean(courseOwned) && (
+      (req.user.role === 'teacher' &&
+        session.teacher?._id?.toString() === req.user._id.toString() &&
+        isSameInstitution(session, req.user)) ||
+      (req.user.role === 'admin' && isSameInstitution(session, req.user))
+    );
+    if (!canExport) {
+      return res.status(403).json({ success: false, message: 'Attendance session access denied.' });
+    }
 
     let csv = `MetricsEdu - Smart Classroom Attendance Report\r\n`;
     csv += `Course: ${session.course ? session.course.code + ' - ' + session.course.title : 'N/A'}\r\n`;
@@ -323,6 +545,72 @@ exports.exportAttendanceCSV = async (req, res) => {
     res.header('Content-Type', 'text/csv');
     res.attachment(`Attendance_${session.course ? session.course.code : 'Session'}_${Date.now()}.csv`);
     return res.send(csv);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Check attendance window for a specific course (called by teacher dashboard on load)
+exports.checkWindowForCourse = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const { courseId } = req.params;
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId || !(await Course.exists({
+      _id: courseId,
+      teacher: teacherId,
+      createdByAdmin: tenantAdminId
+    }))) {
+      return res.status(403).json({ success: false, message: 'You are not assigned to this course.' });
+    }
+
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const todayName = dayNames[now.getDay()];
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const todaySlots = await Timetable.find({
+      teacher: teacherId,
+      course: courseId,
+      day: todayName
+    }).populate('course', 'code title');
+
+    if (todaySlots.length === 0) {
+      return res.json({
+        success: true,
+        allowed: false,
+        reason: `No class scheduled for this subject on ${todayName}.`,
+        todaySlots: []
+      });
+    }
+
+    let activeSlot = null;
+    for (const slot of todaySlots) {
+      const startMin = slot.startMinutes || parseTimeToMinutes(slot.timeSlot.split(/[-–]/)[0]);
+      const endMin = slot.endMinutes || parseTimeToMinutes((slot.timeSlot.split(/[-–]/)[1] || ''));
+      const graceEnd = endMin + 30;
+      if (nowMinutes >= startMin && nowMinutes <= graceEnd) {
+        activeSlot = slot;
+        break;
+      }
+    }
+
+    if (activeSlot) {
+      return res.json({
+        success: true,
+        allowed: true,
+        reason: `Class is live: ${activeSlot.timeSlot} in ${activeSlot.classroom}.`,
+        activeSlot,
+        todaySlots
+      });
+    }
+
+    return res.json({
+      success: true,
+      allowed: false,
+      reason: `Outside class window on ${todayName}. Scheduled: ${todaySlots.map(s => s.timeSlot).join(', ')}.`,
+      todaySlots
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

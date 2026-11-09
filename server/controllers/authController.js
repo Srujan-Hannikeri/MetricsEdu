@@ -1,9 +1,17 @@
-const passport = require('passport');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const User = require('../models/User');
 const emailService = require('../services/emailService');
+const {
+  INSTITUTIONS,
+  getInstitutionTypeFilter,
+  normalizeInstitutionType
+} = require('../config/institutions');
 
 const generateToken = (user) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is required to issue authentication tokens.');
+  }
   return jwt.sign(
     {
       id: user._id,
@@ -11,11 +19,19 @@ const generateToken = (user) => {
       email: user.email,
       name: user.name,
       identifier: user.adminId || user.teacherId || user.usn,
-      institutionType: user.institutionType || 'college'
+      institutionType: user.institutionType || 'institute'
     },
-    process.env.JWT_SECRET || 'metricsedu_smart_classroom_jwt_secret_token_2026',
+    process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
+};
+
+const isValidAdminRegistrationCode = (providedCode) => {
+  const expectedCode = process.env.ADMIN_REGISTRATION_CODE || process.env.ADMIN_SECRET_KEY;
+  if (!expectedCode || typeof providedCode !== 'string') return false;
+  const provided = Buffer.from(providedCode);
+  const expected = Buffer.from(expectedCode);
+  return provided.length === expected.length && crypto.timingSafeEqual(provided, expected);
 };
 
 // Mask email for security/privacy (e.g. j***n@domain.com)
@@ -37,13 +53,17 @@ exports.register = async (req, res) => {
       adminId,
       teacherId,
       usn,
+      branch,
       department,
       semester,
       section,
       phone,
       institutionType,
       standard,
-      parentsEmail
+      pucYear,
+      pucDept,
+      parentsEmail,
+      adminRegistrationCode
     } = req.body;
 
     if (!name || !email || !password || !role) {
@@ -54,7 +74,77 @@ exports.register = async (req, res) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const instType = institutionType === 'school' ? 'school' : 'college';
+    const instType = normalizeInstitutionType(institutionType || 'institute');
+
+    if (!INSTITUTIONS[instType]) {
+      return res.status(400).json({ success: false, message: 'Select a valid institution type.' });
+    }
+
+    if (!['admin', 'teacher', 'student'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Role must be admin, teacher, or student.' });
+    }
+
+    let tenantAdminId = null;
+    if (role === 'admin') {
+      if (!process.env.ADMIN_REGISTRATION_CODE && !process.env.ADMIN_SECRET_KEY) {
+        return res.status(503).json({
+          success: false,
+          message: 'Admin registration is not configured. Set ADMIN_REGISTRATION_CODE on the server.'
+        });
+      }
+      if (!isValidAdminRegistrationCode(adminRegistrationCode)) {
+        return res.status(403).json({ success: false, message: 'Invalid admin invitation code.' });
+      }
+      const ownerAdmins = await User.find({
+        role: 'admin',
+        institutionType: getInstitutionTypeFilter(instType),
+        createdByAdmin: null
+      }).select('_id').limit(2);
+      if (ownerAdmins.length > 1) {
+        return res.status(409).json({
+          success: false,
+          message: 'Admin registration is unavailable because this institution has multiple tenant owners.'
+        });
+      }
+      tenantAdminId = ownerAdmins[0]?._id || null;
+    } else {
+      const institutionAdmins = await User.find({
+        role: 'admin',
+        isActive: true,
+        institutionType: getInstitutionTypeFilter(instType),
+        createdByAdmin: null
+      }).select('_id').limit(2);
+      if (institutionAdmins.length !== 1) {
+        return res.status(409).json({
+          success: false,
+          message: institutionAdmins.length
+            ? 'Registration cannot choose between multiple administrators for this institution.'
+            : 'Registration is not available for this institution yet.'
+        });
+      }
+      tenantAdminId = institutionAdmins[0]._id;
+    }
+
+    const selectedBranch = (branch || department || '').trim();
+    const selectedPucYear = (pucYear || '').trim();
+    const selectedPucDept = (pucDept || '').trim();
+    const selectedStandard = (standard || '').trim();
+
+    if (role !== 'admin' && (instType === 'institute' || instType === 'diploma') &&
+        !INSTITUTIONS[instType].branches.includes(selectedBranch)) {
+      return res.status(400).json({ success: false, message: 'Choose a valid branch for this institution.' });
+    }
+
+    if (role !== 'admin' && instType === 'pu_college' &&
+        (!INSTITUTIONS.pu_college.pucYears.includes(selectedPucYear) ||
+         !INSTITUTIONS.pu_college.pucDepts.includes(selectedPucDept))) {
+      return res.status(400).json({ success: false, message: 'Choose a valid PUC year and department.' });
+    }
+
+    if (instType === 'school' && role === 'student' &&
+        !INSTITUTIONS.school.standards.includes(selectedStandard)) {
+      return res.status(400).json({ success: false, message: 'Choose a valid school standard.' });
+    }
 
     // Check if email already registered
     const existingEmail = await User.findOne({ email: cleanEmail });
@@ -71,24 +161,20 @@ exports.register = async (req, res) => {
       password,
       role,
       institutionType: instType,
-      department: instType === 'school' ? (standard || 'High School') : (department || 'Computer Science & Engineering'),
+      createdByAdmin: tenantAdminId,
+      department: instType === 'school'
+        ? ''
+        : instType === 'pu_college'
+          ? selectedPucDept
+          : selectedBranch,
+      branch: instType === 'institute' || instType === 'diploma' ? selectedBranch : '',
       phone: phone || ''
     };
 
     // Role-specific validation and assignment
     if (role === 'admin') {
       if (!adminId || !adminId.trim()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Admin ID is required for Admin registration.'
-        });
-      }
-      const existingAdminId = await User.findOne({ adminId: adminId.trim() });
-      if (existingAdminId) {
-        return res.status(400).json({
-          success: false,
-          message: 'This Admin ID is already registered.'
-        });
+        return res.status(400).json({ success: false, message: 'Admin ID is required for administrator registration.' });
       }
       userData.adminId = adminId.trim();
     } else if (role === 'teacher') {
@@ -106,6 +192,10 @@ exports.register = async (req, res) => {
         });
       }
       userData.teacherId = teacherId.trim();
+      if (instType === 'pu_college') {
+        userData.pucYear = selectedPucYear;
+        userData.pucDept = selectedPucDept;
+      }
     } else if (role === 'student') {
       if (!usn || !usn.trim()) {
         return res.status(400).json({
@@ -119,16 +209,27 @@ exports.register = async (req, res) => {
         if (!parentsEmail || !parentsEmail.trim()) {
           return res.status(400).json({
             success: false,
-            message: "Parent's Email ID is required for school student registration to send verification OTPs and attendance updates."
+            message: "Parent's Email ID is required for school student registration."
           });
         }
         userData.parentsEmail = parentsEmail.trim().toLowerCase();
-        userData.standard = standard ? standard.trim() : '10th Std';
-      } else {
+        userData.standard = selectedStandard;
+      } else if (instType === 'pu_college') {
+        userData.pucYear = selectedPucYear;
+        userData.pucDept = selectedPucDept;
         if (parentsEmail && parentsEmail.trim()) {
           userData.parentsEmail = parentsEmail.trim().toLowerCase();
         }
-        userData.semester = Number(semester) || 6;
+      } else {
+        // institute or diploma
+        if (parentsEmail && parentsEmail.trim()) {
+          userData.parentsEmail = parentsEmail.trim().toLowerCase();
+        }
+        const selectedSemester = Number(semester);
+        if (!INSTITUTIONS[instType].semesters.includes(selectedSemester)) {
+          return res.status(400).json({ success: false, message: 'Choose a valid semester.' });
+        }
+        userData.semester = selectedSemester;
       }
 
       const cleanUsn = usn.trim().toUpperCase();
@@ -141,11 +242,7 @@ exports.register = async (req, res) => {
       }
       userData.usn = cleanUsn;
       userData.section = section ? section.trim().toUpperCase() : 'A';
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid role. Role must be admin, teacher, or student.'
-      });
+      userData.division = userData.section;
     }
 
     const newUser = new User(userData);
@@ -161,6 +258,12 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     console.error('Registration error:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email or ID already exists.'
+      });
+    }
     return res.status(500).json({
       success: false,
       message: error.message || 'Server error during registration.'
@@ -168,30 +271,43 @@ exports.register = async (req, res) => {
   }
 };
 
-// Login Controller using Passport Local Strategy
-exports.login = (req, res, next) => {
-  passport.authenticate('local', { session: false }, (err, user, info) => {
-    if (err) {
-      console.error('Passport auth error:', err);
-      return res.status(500).json({ success: false, message: 'Internal server error during login' });
+exports.login = async (req, res) => {
+  try {
+    const identifier = String(req.body.identifier || '').trim();
+    const password = req.body.password;
+    const role = req.body.role;
+    if (!identifier || !password) {
+      return res.status(400).json({ success: false, message: 'Identifier and password are required.' });
     }
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: info && info.message ? info.message : 'Invalid credentials'
-      });
-    }
+    const query = {
+      $or: [
+        { email: identifier.toLowerCase() },
+        { adminId: identifier },
+        { teacherId: identifier },
+        { usn: identifier.toUpperCase() }
+      ]
+    };
+    if (role) query.role = role;
 
-    const token = generateToken(user);
+    const user = await User.findOne(query);
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials.' });
+    }
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: 'Account is deactivated. Contact Admin.' });
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Logged in successfully',
-      token,
+      token: generateToken(user),
       user: user.toSafeObject()
     });
-  })(req, res, next);
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ success: false, message: 'Internal server error during login.' });
+  }
 };
 
 // Get current logged-in user profile

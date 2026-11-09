@@ -1,12 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ShieldCheck, GraduationCap, School, LogOut, Sparkles, UserCheck, 
-  X, Mail, User, BookOpen, CheckCircle2, ChevronRight 
+  X, Mail, User, BookOpen, CheckCircle2, ChevronRight, Clock
 } from 'lucide-react';
 
-export default function Navbar({ user, onLogout, onOpenDemoSeed }) {
+// Live clock hook
+function useLiveClock() {
+  const [time, setTime] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return time;
+}
+
+export default function Navbar({ user, onLogout }) {
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const now = useLiveClock();
+
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const dateStr = now.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 
   const getRoleBadge = (role) => {
     switch (role) {
@@ -85,6 +99,13 @@ export default function Navbar({ user, onLogout, onOpenDemoSeed }) {
         {/* User Status / Role / Interactive Profile Pill */}
         {user ? (
           <div className="flex items-center gap-3">
+            {/* Live Clock */}
+            <div className="hidden sm:flex flex-col items-end px-3 py-1.5 rounded-xl bg-[#071b34] border border-[#133966]">
+              <div className="text-sm font-black font-mono text-[#00C49F] tracking-widest leading-none">
+                {timeStr}
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono mt-0.5">{dateStr}</div>
+            </div>
             {/* Clickable Profile Pill (Opens Profile Modal & Sign Out) */}
             <button
               type="button"
@@ -112,7 +133,7 @@ export default function Navbar({ user, onLogout, onOpenDemoSeed }) {
           </div>
         ) : (
           <div className="text-xs text-cyan-200/70 font-mono">
-            Secured by Passport.js
+            Secured by JWT
           </div>
         )}
 
@@ -171,12 +192,18 @@ export default function Navbar({ user, onLogout, onOpenDemoSeed }) {
 
               <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#040d1a] border border-[#133966]">
                 <span className="text-slate-400">
-                  {user.institutionType === 'school' ? 'Standard / Class:' : 'Department & Semester:'}
+                  {user.institutionType === 'school' && user.role === 'student'
+                    ? 'Standard / Class:'
+                    : user.role === 'student' ? 'Department & Semester:' : 'Department:'}
                 </span>
                 <span className="font-bold text-cyan-200">
                   {user.institutionType === 'school'
-                    ? (user.standard || '10th Std')
-                    : `${user.department || 'CSE'} (Sem ${user.semester || 5})`}
+                    ? user.role === 'student' ? (user.standard || '10th Std') : 'School'
+                    : user.role === 'student'
+                      ? `${user.department || 'CSE'} (Sem ${user.semester || 5})`
+                      : user.institutionType === 'pu_college'
+                        ? `${user.pucDept || user.department || '—'} · ${user.pucYear || '—'}`
+                        : (user.department || user.branch || '—')}
                 </span>
               </div>
 
@@ -243,4 +270,3 @@ export default function Navbar({ user, onLogout, onOpenDemoSeed }) {
     </header>
   );
 }
-

@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import AuthView from './components/AuthView';
-import TeacherDashboard from './components/TeacherDashboard';
-import StudentDashboard from './components/StudentDashboard';
-import AdminDashboard from './components/AdminDashboard';
+const TeacherDashboard = lazy(() => import('./components/TeacherDashboard'));
+const StudentDashboard = lazy(() => import('./components/StudentDashboard'));
+const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 import { api, getToken, removeToken } from './services/api';
-import { loadFaceApiModels } from './utils/faceUtils';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -14,8 +13,6 @@ export default function App() {
   // Background initialization & auth restoration
   useEffect(() => {
     checkCurrentUser();
-    // Warm up face-api models asynchronously in background
-    loadFaceApiModels().catch(e => console.log('Background model warming:', e));
   }, []);
 
   const checkCurrentUser = async () => {
@@ -49,17 +46,6 @@ export default function App() {
     setUser(null);
   };
 
-  const handleSeedDemo = async () => {
-    try {
-      const res = await api.seedDemoData();
-      alert(res.message);
-      // Reload profile
-      checkCurrentUser();
-    } catch (err) {
-      alert('Error seeding demo data: ' + err.message);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
@@ -79,24 +65,25 @@ export default function App() {
       <Navbar
         user={user}
         onLogout={handleLogout}
-        onOpenDemoSeed={handleSeedDemo}
       />
 
       {/* Main Content Body */}
       <main className="flex-1">
-        {!user ? (
-          <AuthView onAuthSuccess={handleAuthSuccess} />
-        ) : user.role === 'admin' ? (
-          <AdminDashboard user={user} />
-        ) : user.role === 'teacher' ? (
-          <TeacherDashboard user={user} />
-        ) : user.role === 'student' ? (
-          <StudentDashboard user={user} onUserUpdated={(u) => setUser(u)} />
-        ) : (
-          <div className="p-8 text-center text-xs text-slate-400">
-            Unrecognized role. Contact system administrator.
-          </div>
-        )}
+        <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading dashboard...</div>}>
+          {!user ? (
+            <AuthView onAuthSuccess={handleAuthSuccess} />
+          ) : user.role === 'admin' ? (
+            <AdminDashboard user={user} />
+          ) : user.role === 'teacher' ? (
+            <TeacherDashboard user={user} />
+          ) : user.role === 'student' ? (
+            <StudentDashboard user={user} onUserUpdated={(u) => setUser(u)} />
+          ) : (
+            <div className="p-8 text-center text-xs text-slate-400">
+              Unrecognized role. Contact system administrator.
+            </div>
+          )}
+        </Suspense>
       </main>
 
       {/* Footer */}
@@ -110,7 +97,7 @@ export default function App() {
           <div className="text-[11px] font-mono text-slate-400 flex items-center gap-3">
             <span>MERN Stack</span>
             <span>•</span>
-            <span className="text-[#00C49F]">Passport Authentication</span>
+            <span className="text-[#00C49F]">JWT Authentication</span>
             <span>•</span>
             <span className="text-[#38bdf8]">Zero Python (100% JS Vision)</span>
           </div>

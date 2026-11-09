@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vercel/blob": "^2.4.0",
     "@vladmandic/face-api": "^1.7.15",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.9",

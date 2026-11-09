@@ -2,48 +2,96 @@ const User = require('../models/User');
 const AttendanceSession = require('../models/AttendanceSession');
 const Course = require('../models/Course');
 const Timetable = require('../models/Timetable');
-const faceEngine = require('../services/faceEngine');
+const Semester = require('../models/Semester');
+const {
+  getInstitutionTypeFilter,
+  getStudentCohortFilter,
+  getTenantAdminId,
+  isSameInstitution,
+  normalizeInstitutionType
+} = require('../config/institutions');
 
-// System-wide statistics for Admin
+const SCHEDULE_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function normalizeCourseIdentity(code, title) {
+  const sectionMatch = String(title || '').trim().match(/^(.*?)(?:\s*-\s*|\s+)Section\s+([A-F])$/i);
+  if (!sectionMatch) return { code: String(code || '').trim().toUpperCase(), title: String(title || '').trim(), division: '' };
+  const division = sectionMatch[2].toUpperCase();
+  return {
+    code: String(code || '').trim().toUpperCase().replace(new RegExp(`[-_ ]?${division}$`), ''),
+    title: sectionMatch[1].trim(),
+    division
+  };
+}
+
+function getSemesterWeeks(semester) {
+  if (!semester) return 16;
+  const start = new Date(semester?.startDate);
+  const end = new Date(semester?.endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    throw new Error('The semester needs valid start and end dates before course hours can be scheduled.');
+  }
+  return Math.max(1, Math.ceil((end.getTime() - start.getTime() + 86400000) / (7 * 86400000)));
+}
+
+function getDailyHourTargets(weeklyHours, dayOffset = 0) {
+  const total = Math.max(0, Math.round(weeklyHours));
+  const base = Math.floor(total / SCHEDULE_DAYS.length);
+  const extra = total % SCHEDULE_DAYS.length;
+  const targets = SCHEDULE_DAYS.map((_, index) =>
+    base + (Math.round((index + 1) * extra / SCHEDULE_DAYS.length) >
+      Math.round(index * extra / SCHEDULE_DAYS.length) ? 1 : 0)
+  );
+  return SCHEDULE_DAYS.map((_, index) =>
+    targets[(index - dayOffset + SCHEDULE_DAYS.length) % SCHEDULE_DAYS.length]
+  );
+}
+
+// ─── System-wide statistics — scoped to admin's own institution ──────────────
 exports.getAdminStats = async (req, res) => {
   try {
-    const totalStudents = await User.countDocuments({ role: 'student' });
-    const totalTeachers = await User.countDocuments({ role: 'teacher' });
-    const totalAdmins = await User.countDocuments({ role: 'admin' });
-    const studentsWithFace = await User.countDocuments({ role: 'student', faceRegistered: true });
-    const totalCourses = await Course.countDocuments();
-    const totalSessions = await AttendanceSession.countDocuments();
-    const totalTimetableSlots = await Timetable.countDocuments();
+    const adminUser = await User.findById(req.user._id);
+    const instType = adminUser?.institutionType || 'institute';
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const typeFilter = getInstitutionTypeFilter(instType);
 
-    // Calculate institutional average attendance
-    const allSessions = await AttendanceSession.find().select('attendancePercentage totalPresent totalEnrolled');
-    let avgAttendance = 0;
-    if (allSessions.length > 0) {
-      const sum = allSessions.reduce((acc, s) => acc + (s.attendancePercentage || 0), 0);
-      avgAttendance = Math.round(sum / allSessions.length);
-    }
-
-    // Recent 15 sessions across all classes with teacher and classroom photo audits
-    const recentSessions = await AttendanceSession.find()
-      .populate('course', 'code title semester standard department')
-      .populate('teacher', 'name teacherId email profileImage')
-      .populate('records.student', 'name usn profileImage')
+    const tenantUsers = { createdByAdmin: tenantAdminId, institutionType: typeFilter };
+    const [totalStudents, totalTeachers, totalAdmins, studentsWithFace, courseIds] = await Promise.all([
+      User.countDocuments({ ...tenantUsers, role: 'student' }),
+      User.countDocuments({ ...tenantUsers, role: 'teacher' }),
+      User.countDocuments({
+        role: 'admin',
+        institutionType: typeFilter,
+        $or: [{ _id: tenantAdminId }, { createdByAdmin: tenantAdminId }]
+      }),
+      User.countDocuments({ ...tenantUsers, role: 'student', faceRegistered: true }),
+      Course.find({ createdByAdmin: tenantAdminId }).distinct('_id')
+    ]);
+    const sessionFilter = { course: { $in: courseIds } };
+    const totalCourses  = courseIds.length;
+    const [totalSessions, totalTimetableSlots, attendanceStats, recentSessions] = await Promise.all([
+      AttendanceSession.countDocuments(sessionFilter),
+      Timetable.countDocuments({ course: { $in: courseIds }, institutionType: typeFilter }),
+      AttendanceSession.aggregate([
+        { $match: sessionFilter },
+        { $group: { _id: null, average: { $avg: '$attendancePercentage' } } }
+      ]),
+      AttendanceSession.find(sessionFilter)
+        .select('course teacher sessionDate timeSlot attendancePercentage totalPresent totalEnrolled totalAbsent classPhoto teacherPhoto')
+      .populate('course', 'code title')
+      .populate('teacher', 'name')
       .sort({ sessionDate: -1 })
-      .limit(15);
+      .limit(15)
+    ]);
+    const avgAttendance = Math.round(attendanceStats[0]?.average || 0);
 
     return res.json({
       success: true,
       stats: {
-        totalStudents,
-        totalTeachers,
-        totalAdmins,
-        studentsWithFace,
+        totalStudents, totalTeachers, totalAdmins, studentsWithFace,
         faceRegistrationRate: totalStudents > 0 ? Math.round((studentsWithFace / totalStudents) * 100) : 0,
-        totalCourses,
-        totalSessions,
-        totalTimetableSlots,
-        avgAttendance,
-        recentSessions
+        totalCourses, totalSessions, totalTimetableSlots, avgAttendance, recentSessions
       }
     });
   } catch (error) {
@@ -51,36 +99,43 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 
-// ==================== TIMETABLE CONTROLLER ====================
+// ═══════════════════════════════════════════════════════════════════
+//  TIME HELPERS
+// ═══════════════════════════════════════════════════════════════════
 
-// Helper: Convert time string to minutes from midnight
 function parseTimeToMinutes(t) {
   if (!t) return 0;
   let str = t.trim().toLowerCase();
-  let isPM = str.includes('pm');
-  let isAM = str.includes('am');
+  const isPM = str.includes('pm');
+  const isAM = str.includes('am');
   str = str.replace(/[ap]m/g, '').trim();
   const parts = str.split(':');
   let h = parseInt(parts[0], 10) || 0;
   let m = parseInt(parts[1], 10) || 0;
   if (isPM && h < 12) h += 12;
   if (isAM && h === 12) h = 0;
-  // Heuristic: hours 1 to 6 without AM/PM are in afternoon
   if (!isPM && !isAM && h >= 1 && h <= 6) h += 12;
   return h * 60 + m;
 }
 
-// Helper: Parse slot start & end time
 function parseSlotTimes(slotStr) {
   if (!slotStr) return null;
-  const parts = slotStr.split(/[-–—to]+/i);
+  const parts = slotStr.split(/\s*(?:-|–|—|to)\s*/i);
   if (parts.length < 2) return null;
   const start = parseTimeToMinutes(parts[0]);
   const end = parseTimeToMinutes(parts[1]);
+  if (end <= start) return null;
   return { start, end, rawStart: parts[0].trim(), rawEnd: parts[1].trim() };
 }
 
-// Helper: Verify teacher break constraint (At least 15 minutes break after every class)
+function getTimetableSlotTimes(slot) {
+  if (slot.startMinutes > 0 && slot.endMinutes > slot.startMinutes) {
+    return { start: slot.startMinutes, end: slot.endMinutes };
+  }
+  const parsed = parseSlotTimes(slot.timeSlot);
+  return parsed ? { start: parsed.start, end: parsed.end } : null;
+}
+
 function checkTeacherBreakViolation(newSlotStr, existingSlots, teacherName) {
   const newTimes = parseSlotTimes(newSlotStr);
   if (!newTimes) return null;
@@ -89,38 +144,72 @@ function checkTeacherBreakViolation(newSlotStr, existingSlots, teacherName) {
     const sTimes = parseSlotTimes(s.timeSlot);
     if (!sTimes) continue;
 
-    // 1. Overlap Check
     if (newTimes.start < sTimes.end && newTimes.end > sTimes.start) {
-      return `Schedule Overlap: ${teacherName} is already teaching during this time slot on ${s.day} (${s.timeSlot} - Div ${s.division}). A teacher cannot teach two classes simultaneously.`;
+      return `Overlap: ${teacherName} is already teaching during ${s.timeSlot} on ${s.day} (Div ${s.division}).`;
     }
-
-    // 2. New class starts AFTER existing class: must have >= 15 min break
     const gapAfter = newTimes.start - sTimes.end;
     if (gapAfter >= 0 && gapAfter < 15) {
-      return `Teacher Break Constraint: ${teacherName} has a class ending at ${sTimes.rawEnd} on ${s.day}. Faculty must have at least a 15-minute break after every class before being allocated another class (Current gap: ${gapAfter} mins).`;
+      return `Break Constraint: ${teacherName} needs ≥15 min break after class ending at ${sTimes.rawEnd} on ${s.day} (gap: ${gapAfter} min).`;
     }
-
-    // 3. New class ends BEFORE existing class: must have >= 15 min break
     const gapBefore = sTimes.start - newTimes.end;
     if (gapBefore >= 0 && gapBefore < 15) {
-      return `Teacher Break Constraint: ${teacherName} has a class starting at ${sTimes.rawStart} on ${s.day}. Faculty must have at least a 15-minute break between consecutive classes (Current gap: ${gapBefore} mins).`;
+      return `Break Constraint: ${teacherName} needs ≥15 min break before class at ${sTimes.rawStart} on ${s.day} (gap: ${gapBefore} min).`;
     }
   }
-
   return null;
 }
 
-// Get all timetable slots (optionally filtered by division, day, semester)
+// ═══════════════════════════════════════════════════════════════════
+//  TIMETABLE CRUD
+// ═══════════════════════════════════════════════════════════════════
+
 exports.getTimetables = async (req, res) => {
   try {
-    const { division, day, semester } = req.query;
-    const filter = {};
+    const { division, day, semester, branch, standard, institutionType, pucYear, pucDept } = req.query;
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const filter = { institutionType: getInstitutionTypeFilter(actorType) };
+
+    if (institutionType && normalizeInstitutionType(institutionType) !== actorType) {
+      return res.status(403).json({ success: false, message: 'Timetables are restricted to your institution.' });
+    }
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const tenantCourseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
+    filter.course = { $in: tenantCourseIds };
+    if (req.user.role === 'teacher') filter.teacher = req.user._id;
+
     if (division) filter.division = division.toUpperCase();
     if (day) filter.day = day;
-    if (semester) filter.semester = Number(semester);
+    if (req.user.role === 'student') {
+      Object.assign(filter, getStudentCohortFilter(req.user));
+      filter.division = (req.user.division || req.user.section || division || 'A').toUpperCase();
+    } else {
+      if (semester) filter.semester = Number(semester);
+      if (branch) filter.branch = branch;
+      if (standard) filter.standard = standard;
+      if (actorType === 'pu_college') {
+        if (req.user.role === 'admin') {
+          if (pucYear) filter.pucYear = pucYear;
+          if (pucDept) filter.pucDept = pucDept;
+        } else {
+          filter.pucDept = req.user.pucDept;
+          if (req.user.pucYear) filter.pucYear = req.user.pucYear;
+        }
+      } else if (actorType === 'school' && req.user.role === 'teacher' && req.user.standard) {
+        filter.standard = req.user.standard;
+      } else if (req.user.role === 'teacher' && (actorType === 'institute' || actorType === 'diploma')) {
+        const teacherBranch = req.user.branch || req.user.department;
+        if (branch && branch !== teacherBranch) {
+          return res.status(403).json({ success: false, message: 'Timetables are restricted to your department.' });
+        }
+        filter.branch = teacherBranch;
+      }
+    }
 
     const slots = await Timetable.find(filter)
-      .populate('course', 'code title department')
+      .populate('course', 'code title department branch')
       .populate('teacher', 'name teacherId email')
       .sort({ day: 1, timeSlot: 1 });
 
@@ -130,96 +219,128 @@ exports.getTimetables = async (req, res) => {
   }
 };
 
-// Create a Timetable Entry manually
 exports.createTimetableEntry = async (req, res) => {
   try {
-    const { day, timeSlot, courseId, teacherId, division, classroom, semester, institutionType, standard } = req.body;
+    const { day, timeSlot, courseId, teacherId, division, classroom, semester, branch,
+      standard, pucYear, pucDept } = req.body;
+    const effectiveInstitutionType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
 
-    if (!day || !timeSlot || !courseId || !teacherId) {
-      return res.status(400).json({ success: false, message: 'Day, time slot, course, and teacher are required' });
+    if (!day || !timeSlot || !courseId || !teacherId)
+      return res.status(400).json({ success: false, message: 'Day, timeSlot, course, and teacher are required.' });
+
+    const [course, teacher] = await Promise.all([
+      Course.findOne({ _id: courseId, createdByAdmin: tenantAdminId }),
+      User.findOne({
+        _id: teacherId,
+        role: 'teacher',
+        createdByAdmin: tenantAdminId,
+        institutionType: getInstitutionTypeFilter(effectiveInstitutionType)
+      })
+    ]);
+    if (!course || !teacher || !isSameInstitution(course, req.user) || !isSameInstitution(teacher, req.user)) {
+      return res.status(400).json({ success: false, message: 'Choose a course and teacher from your institution.' });
+    }
+    if (course.teacher && course.teacher.toString() !== teacher._id.toString()) {
+      return res.status(400).json({ success: false, message: 'The selected teacher is not assigned to this course.' });
+    }
+    if ((effectiveInstitutionType === 'institute' || effectiveInstitutionType === 'diploma') &&
+        semester && Number(semester) !== Number(course.semester)) {
+      return res.status(400).json({ success: false, message: 'The selected semester does not match the course.' });
     }
 
     const trimmedSlot = timeSlot.trim();
     const trimmedRoom = (classroom || 'Smart Lecture Hall LH-301').trim();
     const targetDiv = division ? division.toUpperCase() : 'A';
-    const targetSem = semester ? Number(semester) : 5;
+    const targetSem = course.semester;
+    const targetBranch = course.branch || course.department || branch || '';
+    const targetStandard = course.standard || standard || '';
+    const targetPucYear = course.pucYear || pucYear || '';
+    const targetPucDept = course.pucDept || teacher.pucDept || pucDept || '';
+    const tenantCourseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
+    if (((effectiveInstitutionType === 'institute' || effectiveInstitutionType === 'diploma') &&
+          (teacher.branch || teacher.department) !== targetBranch) ||
+        (effectiveInstitutionType === 'pu_college' && teacher.pucDept !== targetPucDept)) {
+      return res.status(400).json({ success: false, message: 'The selected teacher does not belong to this department.' });
+    }
+    if ((branch && targetBranch && branch !== targetBranch) ||
+        (standard && targetStandard && standard !== targetStandard) ||
+        (pucYear && targetPucYear && pucYear !== targetPucYear) ||
+        (pucDept && targetPucDept && pucDept !== targetPucDept)) {
+      return res.status(400).json({ success: false, message: 'The timetable cohort does not match the selected course.' });
+    }
 
-    // 1. Check: Different subjects at the same time in same class/division
+    // 1. Same division/semester clash
     const classConflict = await Timetable.findOne({
-      day,
-      timeSlot: trimmedSlot,
-      division: targetDiv,
-      semester: targetSem
+      day, timeSlot: trimmedSlot, division: targetDiv, semester: targetSem,
+      branch: targetBranch, standard: targetStandard, pucYear: targetPucYear, pucDept: targetPucDept,
+      institutionType: getInstitutionTypeFilter(effectiveInstitutionType),
+      course: { $in: tenantCourseIds }
     }).populate('course', 'code title');
-
-    if (classConflict && classConflict.course && classConflict.course._id.toString() !== courseId.toString()) {
+    if (classConflict && classConflict.course && classConflict.course._id.toString() !== courseId) {
       return res.status(400).json({
         success: false,
-        message: `Schedule Conflict: Division ${targetDiv} already has "${classConflict.course.code} - ${classConflict.course.title}" scheduled on ${day} at ${trimmedSlot}. Cannot allocate two different subjects to the same class at the same time.`
+        message: `Conflict: Division ${targetDiv} already has "${classConflict.course.code}" on ${day} at ${trimmedSlot}.`
       });
     }
 
-    // 2. Check: Teacher >= 15 min Break Rule & Overlap
-    const teacherUser = await User.findById(teacherId);
-    const tName = teacherUser?.name || 'Selected Faculty';
-
+    // 2. Teacher break rule
     const teacherDaySlots = await Timetable.find({
-      day,
-      teacher: teacherId
+      day, teacher: teacherId, institutionType: getInstitutionTypeFilter(effectiveInstitutionType)
     });
+    const breakError = checkTeacherBreakViolation(trimmedSlot, teacherDaySlots, teacher.name || 'Teacher');
+    if (breakError) return res.status(400).json({ success: false, message: breakError });
 
-    const breakError = checkTeacherBreakViolation(trimmedSlot, teacherDaySlots, tName);
-    if (breakError) {
-      return res.status(400).json({
-        success: false,
-        message: breakError
-      });
-    }
-
-    // 3. Conflict Check: Classroom Double-Booking Prevention
+    // 3. Classroom clash
     const roomConflict = await Timetable.findOne({
-      day,
-      timeSlot: trimmedSlot,
-      classroom: trimmedRoom
+      day, timeSlot: trimmedSlot, classroom: trimmedRoom,
+      institutionType: getInstitutionTypeFilter(effectiveInstitutionType),
+      course: { $in: tenantCourseIds }
     });
-
     if (roomConflict && (roomConflict.division !== targetDiv || roomConflict.semester !== targetSem)) {
       return res.status(400).json({
         success: false,
-        message: `Classroom Conflict: Classroom "${trimmedRoom}" is already occupied on ${day} during ${trimmedSlot} by Division ${roomConflict.division}.`
+        message: `Classroom "${trimmedRoom}" is already occupied on ${day} at ${trimmedSlot} by Division ${roomConflict.division}.`
       });
     }
 
+    const slotTimes = parseSlotTimes(trimmedSlot) || { start: 0, end: 0 };
     const newSlot = new Timetable({
-      day,
-      timeSlot: trimmedSlot,
-      course: courseId,
-      teacher: teacherId,
-      division: targetDiv,
-      classroom: trimmedRoom,
-      semester: targetSem,
-      institutionType: institutionType || 'college',
-      standard: standard || ''
+      day, timeSlot: trimmedSlot, course: courseId, teacher: teacherId,
+      division: targetDiv, classroom: trimmedRoom, semester: targetSem,
+      branch: targetBranch,
+      startMinutes: slotTimes.start, endMinutes: slotTimes.end,
+      institutionType: effectiveInstitutionType,
+      standard: targetStandard,
+      pucYear: targetPucYear,
+      pucDept: targetPucDept
     });
-
     await newSlot.save();
     const populated = await Timetable.findById(newSlot._id)
-      .populate('course', 'code title department')
+      .populate('course', 'code title department branch')
       .populate('teacher', 'name teacherId email');
-
-    return res.status(201).json({ success: true, message: 'Timetable entry added successfully', slot: populated });
+    return res.status(201).json({ success: true, message: 'Timetable entry added.', slot: populated });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Update a Timetable Entry
 exports.updateTimetableEntry = async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await Timetable.findById(id);
-    if (!existing) {
-      return res.status(404).json({ success: false, message: 'Timetable entry not found' });
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const institutionFilter = getInstitutionTypeFilter(actorType);
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const existing = await Timetable.findOne({ _id: id, institutionType: institutionFilter });
+    if (!existing) return res.status(404).json({ success: false, message: 'Entry not found.' });
+    if (!(await Course.exists({ _id: existing.course, createdByAdmin: tenantAdminId }))) {
+      return res.status(404).json({ success: false, message: 'Entry not found.' });
     }
 
     const targetDay = req.body.day || existing.day;
@@ -228,343 +349,762 @@ exports.updateTimetableEntry = async (req, res) => {
     const targetTeacher = req.body.teacherId || req.body.teacher || existing.teacher;
     const targetRoom = (req.body.classroom || existing.classroom).trim();
     const targetDiv = (req.body.division || existing.division).toUpperCase();
-    const targetSem = req.body.semester ? Number(req.body.semester) : existing.semester;
+    const [course, teacher] = await Promise.all([
+      Course.findOne({ _id: targetCourse, createdByAdmin: tenantAdminId }),
+      User.findOne({
+        _id: targetTeacher,
+        role: 'teacher',
+        createdByAdmin: tenantAdminId,
+        institutionType: institutionFilter
+      })
+    ]);
+    if (!course || !teacher || !isSameInstitution(course, req.user) || !isSameInstitution(teacher, req.user)) {
+      return res.status(400).json({ success: false, message: 'Choose a course and teacher from your institution.' });
+    }
+    if (course.teacher && course.teacher.toString() !== teacher._id.toString()) {
+      return res.status(400).json({ success: false, message: 'The selected teacher is not assigned to this course.' });
+    }
+    if ((actorType === 'institute' || actorType === 'diploma') &&
+        req.body.semester && Number(req.body.semester) !== Number(course.semester)) {
+      return res.status(400).json({ success: false, message: 'The selected semester does not match the course.' });
+    }
+    const targetSem = course.semester;
+    const targetBranch = course.branch || course.department || '';
+    const targetStandard = course.standard || '';
+    const targetPucYear = course.pucYear || '';
+    const targetPucDept = course.pucDept || teacher.pucDept || '';
+    const tenantCourseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
+    if (((actorType === 'institute' || actorType === 'diploma') &&
+          (teacher.branch || teacher.department) !== targetBranch) ||
+        (actorType === 'pu_college' && teacher.pucDept !== targetPucDept)) {
+      return res.status(400).json({ success: false, message: 'The selected teacher does not belong to this department.' });
+    }
+    if ((req.body.branch && req.body.branch !== targetBranch) ||
+        (req.body.standard && req.body.standard !== targetStandard) ||
+        (req.body.pucYear && req.body.pucYear !== targetPucYear) ||
+        (req.body.pucDept && req.body.pucDept !== targetPucDept)) {
+      return res.status(400).json({ success: false, message: 'The timetable cohort does not match the selected course.' });
+    }
 
-    // 1. Check: Different subjects at the same time in same class/division
     if (targetCourse) {
       const classConflict = await Timetable.findOne({
-        _id: { $ne: id },
-        day: targetDay,
-        timeSlot: targetSlot,
-        division: targetDiv,
-        semester: targetSem
+        _id: { $ne: id }, day: targetDay, timeSlot: targetSlot,
+        division: targetDiv, semester: targetSem, branch: targetBranch,
+        standard: targetStandard, pucYear: targetPucYear, pucDept: targetPucDept,
+        institutionType: institutionFilter,
+        course: { $in: tenantCourseIds }
       }).populate('course', 'code title');
-
       if (classConflict && classConflict.course && classConflict.course._id.toString() !== targetCourse.toString()) {
         return res.status(400).json({
           success: false,
-          message: `Schedule Conflict: Division ${targetDiv} already has "${classConflict.course.code} - ${classConflict.course.title}" scheduled on ${targetDay} at ${targetSlot}. Cannot allocate two different subjects to the same class at the same time.`
+          message: `Conflict: Division ${targetDiv} already has "${classConflict.course.code}" on ${targetDay} at ${targetSlot}.`
         });
       }
     }
 
-    // 2. Check: Teacher >= 15 min Break Rule & Overlap
     if (targetTeacher) {
-      const teacherUser = await User.findById(targetTeacher);
-      const tName = teacherUser?.name || 'Selected Faculty';
-
       const teacherDaySlots = await Timetable.find({
-        _id: { $ne: id },
-        day: targetDay,
-        teacher: targetTeacher
+        _id: { $ne: id }, day: targetDay, teacher: targetTeacher, institutionType: institutionFilter
       });
-
-      const breakError = checkTeacherBreakViolation(targetSlot, teacherDaySlots, tName);
-      if (breakError) {
-        return res.status(400).json({
-          success: false,
-          message: breakError
-        });
-      }
+      const breakError = checkTeacherBreakViolation(targetSlot, teacherDaySlots, teacher.name || 'Teacher');
+      if (breakError) return res.status(400).json({ success: false, message: breakError });
     }
 
-    // 3. Conflict Check: Classroom Double-Booking Prevention
     if (targetRoom) {
       const roomConflict = await Timetable.findOne({
-        _id: { $ne: id },
-        day: targetDay,
-        timeSlot: targetSlot,
-        classroom: targetRoom
+        _id: { $ne: id }, day: targetDay, timeSlot: targetSlot, classroom: targetRoom,
+        institutionType: institutionFilter,
+        course: { $in: tenantCourseIds }
       });
-
       if (roomConflict && roomConflict.division !== targetDiv) {
         return res.status(400).json({
           success: false,
-          message: `Classroom Conflict: Classroom "${targetRoom}" is already booked by Division ${roomConflict.division} on ${targetDay} at ${targetSlot}.`
+          message: `Classroom "${targetRoom}" is already booked by Division ${roomConflict.division} on ${targetDay} at ${targetSlot}.`
         });
       }
     }
 
-    const updated = await Timetable.findByIdAndUpdate(id, { $set: req.body }, { new: true })
-      .populate('course', 'code title department')
+    const slotTimes = parseSlotTimes(targetSlot) || { start: 0, end: 0 };
+    const updateData = {
+      ...req.body,
+      course: targetCourse,
+      teacher: targetTeacher,
+      branch: targetBranch,
+      semester: targetSem,
+      standard: targetStandard,
+      pucYear: targetPucYear,
+      pucDept: targetPucDept,
+      institutionType: actorType,
+      startMinutes: slotTimes.start,
+      endMinutes: slotTimes.end
+    };
+    const updated = await Timetable.findOneAndUpdate(
+      { _id: id, institutionType: institutionFilter },
+      { $set: updateData },
+      { new: true }
+    )
+      .populate('course', 'code title department branch')
       .populate('teacher', 'name teacherId email');
-
-    return res.json({ success: true, message: 'Timetable entry updated', slot: updated });
+    return res.json({ success: true, message: 'Timetable entry updated.', slot: updated });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Delete a Timetable Entry
 exports.deleteTimetableEntry = async (req, res) => {
   try {
-    const { id } = req.params;
-    await Timetable.findByIdAndDelete(id);
-    return res.json({ success: true, message: 'Timetable entry deleted' });
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const tenantCourseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
+    await Timetable.findOneAndDelete({
+      _id: req.params.id,
+      institutionType: getInstitutionTypeFilter(normalizeInstitutionType(req.user.institutionType || 'institute')),
+      course: { $in: tenantCourseIds }
+    });
+    return res.json({ success: true, message: 'Timetable entry deleted.' });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Automated Timetable Generator with Teacher Break Rules & Zero Conflicts
+// ═══════════════════════════════════════════════════════════════════
+//  ADVANCED SCHEDULING ALGORITHM (Constraint-Based)
+//
+//  Constraints enforced:
+//  1. A teacher cannot teach 2 subjects in the same semester (1 subject per teacher per semester)
+//  2. A teacher cannot be scheduled in 2 classes at the same time
+//  3. A teacher must have ≥15 min break between consecutive classes on the same day
+//  4. A division cannot have 2 subjects at the same time slot
+//  5. Classroom double-booking prevention
+//  6. Max 2 consecutive periods before a break for a teacher
+//  7. Saturday has limited slots (no afternoon)
+//  8. Generates independently for each requested division
+// ═══════════════════════════════════════════════════════════════════
+
 exports.autoGenerateTimetable = async (req, res) => {
   try {
-    const { division, semester, institutionType, standard } = req.body;
-    const targetDiv = (division || 'A').toUpperCase();
-    const targetSem = Number(semester) || 5;
-    const instType = institutionType || 'college';
+    const {
+      divisions, division, semester, branch, institutionType, standard,
+      pucYear, pucDept, semesterId, classrooms
+    } = req.body;
 
-    const query = { semester: targetSem };
-    if (instType === 'school' && standard) {
-      query.standard = standard;
-      query.institutionType = 'school';
+    // Accept either a single division or an array of divisions
+    const targetDivs = divisions
+      ? (Array.isArray(divisions) ? divisions.map(d => d.toUpperCase()) : [divisions.toUpperCase()])
+      : [(division || 'A').toUpperCase()];
+
+    const instType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    if (institutionType && normalizeInstitutionType(institutionType) !== instType) {
+      return res.status(403).json({ success: false, message: 'Timetables are restricted to your institution.' });
     }
 
-    const courses = await Course.find(query).populate('teacher');
-    if (courses.length === 0) {
-      return res.status(400).json({ success: false, message: 'No courses found for this semester/standard to generate timetable' });
+    const semDoc = semesterId
+      ? await Semester.findOne({
+          _id: semesterId,
+          adminId: tenantAdminId,
+          institutionType: getInstitutionTypeFilter(instType)
+        }).populate('subjects.teacher')
+      : null;
+    if (semesterId && !semDoc) {
+      return res.status(404).json({ success: false, message: 'Semester configuration not found for your institution.' });
     }
 
-    const teachers = await User.find({ role: 'teacher' });
-    if (teachers.length === 0) {
-      return res.status(400).json({ success: false, message: 'No teachers registered in system' });
+    const targetBranch = branch || semDoc?.branch || '';
+    const targetStandard = standard || semDoc?.standard || '';
+    const targetPucYear = pucYear || semDoc?.pucYear || '';
+    const targetPucDept = pucDept || semDoc?.pucDept || '';
+    const targetSem = Number(semester) || semDoc?.semesterNumber ||
+      (instType === 'school' ? Math.max(1, Number(targetStandard.match(/^\d+/)?.[0]) || 1) :
+        instType === 'pu_college' ? (targetPucYear === '2nd PUC' ? 2 : 1) : 5);
+
+    if (semDoc && (
+      (semDoc.branch && semDoc.branch !== targetBranch) ||
+      (semDoc.standard && semDoc.standard !== targetStandard) ||
+      (semDoc.pucYear && semDoc.pucYear !== targetPucYear) ||
+      (semDoc.pucDept && semDoc.pucDept !== targetPucDept) ||
+      (semDoc.semesterNumber && semDoc.semesterNumber !== targetSem)
+    )) {
+      return res.status(400).json({ success: false, message: 'The selected semester does not match the requested cohort.' });
     }
 
-    // Days & Time slots (Aligned with KLS GIT Classroom Timetable)
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const timeSlots = [
-      '08:30 AM - 09:25 AM',
-      '09:25 AM - 10:20 AM',
-      '10:50 AM - 11:45 AM',
-      '11:45 AM - 12:40 PM',
-      '01:30 PM - 03:30 PM'
-    ];
+    // ── Load subjects for this semester ──────────────────────────────────────
+    // Priority: use Semester document subjects if semesterId given, else fall back to Courses
+    let subjectsWithTeachers = [];
 
-    // Remove old slots for this division and semester
-    await Timetable.deleteMany({ division: targetDiv, semester: targetSem });
-
-    let hallName = 'Class Room: AS-11';
-    if (targetDiv === 'A') hallName = 'Smart Lecture Hall LH-301';
-    else if (targetDiv === 'B') hallName = 'Lecture Hall LH-302';
-    else hallName = 'Class Room: AS-11';
-
-    const newSlots = [];
-    let courseIndex = 0;
-
-    for (let d = 0; d < days.length; d++) {
-      const day = days[d];
-      // Consecutive class tracker for teachers on this day: max 2 consecutive
-      const consecutiveClasses = {};
-      teachers.forEach(t => { consecutiveClasses[t._id.toString()] = 0; });
-
-      for (let s = 0; s < timeSlots.length; s++) {
-        // Skip Saturday afternoon slots (slots 3 and 4)
-        if (day === 'Saturday' && s >= 3) continue;
-
-        // Reset consecutive count after Tea Break (slot 2) and Lunch Break (slot 4)
-        if (s === 2 || s === 4) {
-          teachers.forEach(t => { consecutiveClasses[t._id.toString()] = 0; });
-        }
-
-        const slotTime = timeSlots[s];
-
-        // Find candidate course & teacher with:
-        // 1) consecutive count < 2 (teacher gets break after 2 classes)
-        // 2) no conflict in another division at that (day, slotTime)
-        let chosenCourse = null;
-        let chosenTeacher = null;
-
-        for (let attempt = 0; attempt < courses.length * 2; attempt++) {
-          const candCourse = courses[(courseIndex + attempt) % courses.length];
-          const candTeacher = candCourse.teacher || teachers[(courseIndex + attempt) % teachers.length];
-          const tId = candTeacher._id.toString();
-
-          // Check rule: teacher cannot teach back-to-back classes without at least 15 min break
-          const alreadyAssignedToday = newSlots.filter(ns => ns.day === day && ns.teacher.toString() === tId);
-          const hasBreakViolation = checkTeacherBreakViolation(slotTime, alreadyAssignedToday, candTeacher.name);
-          if (hasBreakViolation) {
-            continue; // teacher needs at least 15 min break between classes
-          }
-
-          // Check rule: teacher double-booking across other divisions/classes
-          const hasTeacherClash = await Timetable.findOne({
-            day,
-            timeSlot: slotTime,
-            teacher: candTeacher._id
+    if (semDoc) {
+      if (semDoc.subjects.length > 0) {
+        const semesterWeeks = getSemesterWeeks(semDoc);
+        for (const div of targetDivs) {
+          const divisionSubjects = semDoc.subjects.filter(subject => {
+            const identity = normalizeCourseIdentity(subject.code, subject.title);
+            return String(subject.division || identity.division).toUpperCase() === div;
           });
-          if (hasTeacherClash) {
-            continue; // teacher is busy in another class
-          }
-
-          // Check rule: classroom clash
-          const hasRoomClash = await Timetable.findOne({
-            day,
-            timeSlot: slotTime,
-            classroom: hallName
+          const sourceSubjects = divisionSubjects.length
+            ? divisionSubjects
+            : semDoc.subjects.filter(subject => {
+                const identity = normalizeCourseIdentity(subject.code, subject.title);
+                return !String(subject.division || identity.division).trim();
+              });
+          const uniqueSubjects = new Map();
+          sourceSubjects.filter(subject => subject.teacher).forEach(subject => {
+            const identity = normalizeCourseIdentity(subject.code, subject.title);
+            if (uniqueSubjects.has(identity.code)) return;
+            const semesterHours = Number(subject.semesterHours) || null;
+            const weeklyHours = semesterHours
+              ? semesterHours / semesterWeeks
+              : Number(subject.weeklyHours) || 4;
+            uniqueSubjects.set(identity.code, {
+              subjectCode: identity.code,
+              subjectTitle: identity.title,
+              semesterHours,
+              weeklyHours,
+              division: div,
+              dailyHourTargets: getDailyHourTargets(weeklyHours, uniqueSubjects.size),
+              teacher: subject.teacher,
+              courseId: null
+            });
           });
-          if (hasRoomClash) {
-            continue; // hall is occupied
-          }
-
-          // Found valid candidate!
-          chosenCourse = candCourse;
-          chosenTeacher = candTeacher;
-          courseIndex = (courseIndex + attempt + 1) % courses.length;
-          break;
+          subjectsWithTeachers.push(...uniqueSubjects.values());
         }
 
-        // Fallback if strict constraints are exhausted: pick course and reset teacher consecutive
-        if (!chosenCourse) {
-          chosenCourse = courses[courseIndex % courses.length];
-          chosenTeacher = chosenCourse.teacher || teachers[courseIndex % teachers.length];
-          courseIndex++;
-        }
-
-        const chosenTId = chosenTeacher._id.toString();
-        // Update consecutive count for all teachers
-        teachers.forEach(t => {
-          const idStr = t._id.toString();
-          if (idStr === chosenTId) {
-            consecutiveClasses[idStr] = (consecutiveClasses[idStr] || 0) + 1;
-          } else {
-            consecutiveClasses[idStr] = 0; // Got a break/free slot
+        // Try to map to existing Course documents
+        for (const sub of subjectsWithTeachers) {
+          const course = await Course.findOne({
+            code: sub.subjectCode,
+            createdByAdmin: tenantAdminId,
+            institutionType: getInstitutionTypeFilter(instType),
+            branch: targetBranch,
+            standard: targetStandard,
+            pucYear: targetPucYear,
+            pucDept: targetPucDept,
+            semester: targetSem,
+            section: sub.division
+          });
+          if (course) {
+            course.code = sub.subjectCode;
+            course.title = sub.subjectTitle;
+            course.teacher = sub.teacher._id;
+            course.semesterHours = sub.semesterHours;
+            course.section = sub.division;
+            await course.save();
+            sub.courseId = course._id;
           }
+          else {
+            const newCourse = new Course({
+              code: sub.subjectCode,
+              title: sub.subjectTitle,
+              department: targetBranch,
+              branch: targetBranch,
+              semester: targetSem,
+              teacher: sub.teacher._id,
+              semesterHours: sub.semesterHours,
+              section: sub.division,
+              institutionType: instType,
+              standard: targetStandard,
+              pucYear: targetPucYear,
+              pucDept: targetPucDept,
+              createdByAdmin: tenantAdminId,
+              semesterRef: semDoc._id
+            });
+            await newCourse.save();
+            sub.courseId = newCourse._id;
+          }
+        }
+      }
+    }
+
+    // Fallback: load from Course model
+    if (subjectsWithTeachers.length === 0) {
+      const query = {
+        semester: targetSem,
+        institutionType: getInstitutionTypeFilter(instType),
+        createdByAdmin: tenantAdminId,
+        branch: targetBranch,
+        standard: targetStandard,
+        pucYear: targetPucYear,
+        pucDept: targetPucDept
+      };
+
+      const courses = await Course.find(query).populate('teacher');
+      for (const div of targetDivs) {
+        const divisionCourses = courses.filter(course => {
+          const identity = normalizeCourseIdentity(course.code, course.title);
+          return String(course.section || identity.division).toUpperCase() === div;
         });
+        const sourceCourses = divisionCourses.length ? divisionCourses : courses.filter(course => {
+          const identity = normalizeCourseIdentity(course.code, course.title);
+          return !String(course.section || identity.division).trim();
+        });
+        const uniqueSubjects = new Map();
+        sourceCourses.filter(course => course.teacher).forEach(course => {
+          const identity = normalizeCourseIdentity(course.code, course.title);
+          if (uniqueSubjects.has(identity.code)) return;
+          const semesterHours = Number(course.semesterHours) || null;
+          const weeklyHours = semesterHours && semDoc
+            ? semesterHours / getSemesterWeeks(semDoc)
+            : 4;
+          uniqueSubjects.set(identity.code, {
+            subjectCode: identity.code,
+            subjectTitle: identity.title,
+            semesterHours,
+            weeklyHours,
+            division: div,
+            dailyHourTargets: getDailyHourTargets(weeklyHours, uniqueSubjects.size),
+            teacher: course.teacher,
+            courseId: course._id
+          });
+        });
+        subjectsWithTeachers.push(...uniqueSubjects.values());
+      }
+    }
 
-        newSlots.push({
-          day,
-          timeSlot: slotTime,
-          course: chosenCourse._id,
-          teacher: chosenTeacher._id,
-          division: targetDiv,
-          classroom: hallName,
-          semester: targetSem,
-          institutionType: instType,
-          standard: standard || '',
-          classCoordinator: targetDiv === 'C' ? 'Prof. Nandini C.V' : (targetDiv === 'B' ? 'Dr. A.A. Quazi' : 'Prof. Pavan K.K')
+    if (subjectsWithTeachers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `No subjects with assigned teachers found for ${targetBranch} Semester ${targetSem}. Please add subjects and assign teachers first.`
+      });
+    }
+    const divisionsWithoutAssignments = targetDivs.filter(div =>
+      !subjectsWithTeachers.some(subject => subject.division === div)
+    );
+    if (divisionsWithoutAssignments.length) {
+      return res.status(400).json({
+        success: false,
+        message: `Assign at least one subject teacher for Division(s) ${divisionsWithoutAssignments.join(', ')} before generating the timetable.`
+      });
+    }
+
+    for (const subject of subjectsWithTeachers) {
+      const teacher = subject.teacher;
+      const teacherBranch = teacher.branch || teacher.department;
+      if (teacher.createdByAdmin?.toString() !== tenantAdminId.toString() ||
+          !isSameInstitution(teacher, req.user) ||
+          ((instType === 'institute' || instType === 'diploma') && teacherBranch !== targetBranch) ||
+          (instType === 'pu_college' &&
+            (teacher.pucDept !== targetPucDept || (teacher.pucYear && teacher.pucYear !== targetPucYear)))) {
+        return res.status(400).json({
+          success: false,
+          message: `Teacher assigned to ${subject.subjectCode} does not belong to the selected institution and department.`
         });
       }
     }
 
-    await Timetable.insertMany(newSlots);
+    // ── Enforce: 1 teacher → 1 subject per semester ──────────────────────────
+    const teacherSubjectMap = {};
+    for (const sub of subjectsWithTeachers) {
+      const tid = sub.teacher._id.toString();
+      const teacherDivisionKey = `${sub.division}:${tid}`;
+      if (teacherSubjectMap[teacherDivisionKey]) {
+        return res.status(400).json({
+          success: false,
+          message: `Teacher constraint violated: "${sub.teacher.name}" is assigned to both "${teacherSubjectMap[teacherDivisionKey].subjectTitle}" and "${sub.subjectTitle}" in Division ${sub.division}.`
+        });
+      }
+      teacherSubjectMap[teacherDivisionKey] = sub;
+    }
 
-    const generated = await Timetable.find({ division: targetDiv, semester: targetSem })
-      .populate('course', 'code title department')
+    // ── Time slots & days setup ───────────────────────────────────────────────
+    const days = SCHEDULE_DAYS;
+    const timeSlots = [
+      { slot: '08:30 AM - 09:25 AM', start: parseTimeToMinutes('08:30 AM'), end: parseTimeToMinutes('09:25 AM') },
+      { slot: '09:25 AM - 10:20 AM', start: parseTimeToMinutes('09:25 AM'), end: parseTimeToMinutes('10:20 AM') },
+      { slot: '10:50 AM - 11:45 AM', start: parseTimeToMinutes('10:50 AM'), end: parseTimeToMinutes('11:45 AM') },
+      { slot: '11:45 AM - 12:40 PM', start: parseTimeToMinutes('11:45 AM'), end: parseTimeToMinutes('12:40 PM') },
+      { slot: '01:30 PM - 03:30 PM', start: parseTimeToMinutes('01:30 PM'), end: parseTimeToMinutes('03:30 PM') }
+    ];
+
+    // Break slots (indices): after slot index 1 (Tea break), after slot index 3 (Lunch)
+    const BREAK_AFTER_SLOT_INDEX = new Set([1, 3]);
+
+    const generatedSlots = [];
+    const errors = [];
+    const ownedCourseIds = await Course.find({
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(instType),
+      branch: targetBranch,
+      semester: targetSem,
+      standard: targetStandard,
+      pucYear: targetPucYear,
+      pucDept: targetPucDept
+    }).distinct('_id');
+
+    // ── Delete existing timetable for all target divisions ────────────────────
+    for (const div of targetDivs) {
+      const deleteQuery = {
+        division: div,
+        semester: targetSem,
+        branch: targetBranch,
+        standard: targetStandard,
+        pucYear: targetPucYear,
+        pucDept: targetPucDept,
+        institutionType: getInstitutionTypeFilter(instType),
+        course: { $in: ownedCourseIds }
+      };
+      await Timetable.deleteMany(deleteQuery);
+    }
+
+    // ── ALGORITHM: Round-Robin with Constraint Satisfaction ──────────────────
+    // We maintain per-division and per-teacher state across the scheduling loop.
+    // For each (day, slot, division) triple we attempt to place the best fitting subject.
+
+    const subjectWeekHours = {};
+    const subjectDayHours = {};
+
+    // Classroom assignment per division
+    const divClassrooms = {};
+    for (let i = 0; i < targetDivs.length; i++) {
+      const div = targetDivs[i];
+      if (classrooms && classrooms[div]) {
+        divClassrooms[div] = classrooms[div];
+      } else {
+        const rooms = ['Smart Lecture Hall LH-301', 'Smart Lecture Hall LH-302', 'Class Room: AS-11', 'Class Room: AS-12', 'Class Room: AS-13'];
+        divClassrooms[div] = rooms[i % rooms.length];
+      }
+    }
+
+    // Pre-fetch already-scheduled slots for teachers in OTHER divisions to avoid double-booking
+    // (These are slots NOT being deleted — i.e., from other branch/sem)
+    const allExistingTeacherSlots = await Timetable.find({
+      branch: targetBranch,
+      semester: targetSem,
+      standard: targetStandard,
+      pucYear: targetPucYear,
+      pucDept: targetPucDept,
+      institutionType: getInstitutionTypeFilter(instType),
+      division: { $nin: targetDivs },
+      course: { $in: ownedCourseIds }
+    }).select('day timeSlot teacher division');
+
+    for (const div of targetDivs) {
+      const divisionSubjects = subjectsWithTeachers.filter(subject => subject.division === div);
+      // Coordinator per division
+      let coordinator = 'Class Coordinator';
+      if (div === 'A') coordinator = 'Prof. Pavan K.K';
+      else if (div === 'B') coordinator = 'Dr. A.A. Quazi';
+      else if (div === 'C') coordinator = 'Prof. Nandini C.V';
+
+      const classroom = divClassrooms[div];
+
+      // Round-robin pointer per division (start at different offsets to distribute subjects evenly)
+      let subjectPointer = 0;
+
+      // Track what teacher is doing on each day for THIS division's generation pass
+      // We accumulate newlyGeneratedSlots for real-time constraint checking
+      const thisPassSlots = [];   // slots generated so far in this division pass
+
+      for (const day of days) {
+        subjectPointer = days.indexOf(day) % divisionSubjects.length;
+        const isSaturday = day === 'Saturday';
+        const slotsForDay = isSaturday
+          ? timeSlots.slice(0, 3) // Saturday: slots 0,1,2 only
+          : timeSlots;
+
+        for (let slotIdx = 0; slotIdx < slotsForDay.length; slotIdx++) {
+          const { slot, start: slotStart, end: slotEnd } = slotsForDay[slotIdx];
+          const slotHours = Math.max(1, Math.round((slotEnd - slotStart) / 60));
+
+          // Try to find a valid subject for this slot
+          let placed = false;
+          let attempts = 0;
+          const maxAttempts = divisionSubjects.length * 2;
+
+          while (!placed && attempts < maxAttempts) {
+            const candidate = divisionSubjects[(subjectPointer + attempts) % divisionSubjects.length];
+            const teacher = candidate.teacher;
+            const tid = teacher._id.toString();
+            const subjectDivisionKey = `${candidate.subjectCode}:${div}`;
+            const subjectDayKey = `${subjectDivisionKey}:${day}`;
+            const weeklyTarget = Math.round(candidate.weeklyHours);
+            const dailyTarget = candidate.dailyHourTargets[days.indexOf(day)];
+            const currentWeekHours = subjectWeekHours[subjectDivisionKey] || 0;
+            const currentDayHours = subjectDayHours[subjectDayKey] || 0;
+            const withinWeeklyHours = weeklyTarget > 0 &&
+              currentWeekHours + slotHours <= weeklyTarget + (slotHours === 2 ? 1 : 0);
+            const withinDailyHours = dailyTarget > 0 &&
+              currentDayHours + slotHours <= dailyTarget + (slotHours === 2 ? 1 : 0);
+            if (!withinWeeklyHours || !withinDailyHours) { attempts++; continue; }
+
+            // ── Constraint A: Division double-booking ─────────────────────────
+            const divConflict = thisPassSlots.some(
+              s => s.day === day && s.timeSlot === slot && s.division === div
+            );
+            if (divConflict) { attempts++; continue; }
+
+            // ── Constraint B: Teacher time overlap (all divisions, this pass + existing) ─
+            const teacherBusyNow = generatedSlots.some(s => {
+              if (s.teacher.toString() !== tid || s.day !== day) return false;
+              const sT = parseSlotTimes(s.timeSlot);
+              return sT && slotStart < sT.end && slotEnd > sT.start;
+            }) || allExistingTeacherSlots.some(s => {
+              if (s.teacher.toString() !== tid || s.day !== day) return false;
+              const sT = parseSlotTimes(s.timeSlot);
+              return sT && slotStart < sT.end && slotEnd > sT.start;
+            });
+            if (teacherBusyNow) { attempts++; continue; }
+
+            // ── Constraint C: Teacher ≥15 min break ──────────────────────────
+            const teacherDaySlotsThisPass = generatedSlots.filter(
+              s => s.day === day && s.teacher.toString() === tid
+            );
+            const allTeacherDaySlots = [
+              ...teacherDaySlotsThisPass,
+              ...allExistingTeacherSlots.filter(s => s.day === day && s.teacher.toString() === tid)
+            ];
+            const breakViolation = checkTeacherBreakViolation(slot, allTeacherDaySlots, teacher.name);
+            if (breakViolation) { attempts++; continue; }
+
+            // ── Constraint D: Classroom double-booking ────────────────────────
+            const roomBusy = generatedSlots.some(
+              s => s.day === day && s.timeSlot === slot && s.classroom === classroom && s.division !== div
+            );
+            if (roomBusy) { attempts++; continue; }
+
+            // ✅ All constraints passed — place this slot
+            const newSlot = {
+              day, timeSlot: slot,
+              course: candidate.courseId,
+              teacher: teacher._id,
+              division: div,
+              classroom,
+              semester: targetSem,
+              branch: targetBranch,
+              startMinutes: slotStart,
+              endMinutes: slotEnd,
+              institutionType: instType,
+              standard: targetStandard,
+              pucYear: targetPucYear,
+              pucDept: targetPucDept,
+              classCoordinator: coordinator,
+              semesterRef: semDoc?._id || null
+            };
+
+            thisPassSlots.push({ ...newSlot, teacher: tid });
+            generatedSlots.push(newSlot);
+            subjectWeekHours[subjectDivisionKey] = currentWeekHours + slotHours;
+            subjectDayHours[subjectDayKey] = currentDayHours + slotHours;
+            subjectPointer = (subjectPointer + attempts + 1) % divisionSubjects.length;
+            placed = true;
+          }
+
+          if (!placed) {
+            continue;
+          }
+        }
+      }
+    }
+
+    for (const div of targetDivs) {
+      for (const subject of subjectsWithTeachers.filter(item => item.division === div)) {
+        const subjectDivisionKey = `${subject.subjectCode}:${div}`;
+        const targetHours = Math.round(subject.weeklyHours);
+        const scheduledHours = subjectWeekHours[subjectDivisionKey] || 0;
+        if (scheduledHours < targetHours) {
+          errors.push(`Division ${div}: ${subject.subjectTitle} scheduled for ${scheduledHours} of ${targetHours} weekly hours.`);
+        }
+      }
+    }
+
+    // ── Bulk insert ───────────────────────────────────────────────────────────
+    await Timetable.insertMany(generatedSlots);
+
+    const filter = {
+      semester: targetSem,
+      branch: targetBranch,
+      standard: targetStandard,
+      pucYear: targetPucYear,
+      pucDept: targetPucDept,
+      institutionType: getInstitutionTypeFilter(instType),
+      division: { $in: targetDivs },
+      course: { $in: ownedCourseIds }
+    };
+    const generated = await Timetable.find(filter)
+      .populate('course', 'code title department branch')
       .populate('teacher', 'name teacherId email');
 
     return res.json({
       success: true,
-      message: `Automated Timetable generated successfully for Division ${targetDiv}! Enforced 0 teacher/room clashes and breaks between consecutive classes.`,
-      slots: generated
+      message: `Timetable generated for Division(s) ${targetDivs.join(', ')} — ${targetBranch} Sem ${targetSem}. Total ${generatedSlots.length} slots created with 0 teacher/room conflicts.`,
+      slots: generated,
+      warnings: errors
     });
   } catch (error) {
+    console.error('Timetable generation error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== DIVISION ALLOCATION CONTROLLER ====================
+// ═══════════════════════════════════════════════════════════════════
+//  DIVISION ALLOCATION
+// ═══════════════════════════════════════════════════════════════════
 
-// Allocate Students to Divisions (Semester/Standard criteria, Admin class strength, Custom Divisions)
 exports.allocateDivisions = async (req, res) => {
   try {
-    const { mode, semester, standard, institutionType, classStrength, divisionsList, allocations } = req.body;
-    // mode: 'auto' | 'manual'
-
+    const {
+      mode, semester, standard, branch, pucYear, pucDept,
+      divisionsList, allocations
+    } = req.body;
     if (mode === 'auto') {
-      const query = { role: 'student' };
+      // Scope to the admin's own institution type
+      const adminUser = await User.findById(req.user._id);
+      const instType = normalizeInstitutionType(adminUser?.institutionType || 'institute');
+      const typeFilter = getInstitutionTypeFilter(instType);
+
+      const tenantAdminId = getTenantAdminId(req.user);
+      if (!tenantAdminId) {
+        return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+      }
+      const query = {
+        role: 'student',
+        institutionType: typeFilter,
+        createdByAdmin: tenantAdminId
+      };
       if (semester) query.semester = Number(semester);
       if (standard) query.standard = standard;
-      if (institutionType) query.institutionType = institutionType;
+      if (branch)   query.branch = branch;
+      if (pucYear) query.pucYear = pucYear;
+      if (pucDept) query.pucDept = pucDept;
 
       const targetStudents = await User.find(query).sort({ usn: 1, name: 1 });
-      const total = targetStudents.length;
-
-      if (total === 0) {
-        return res.status(400).json({
-          success: false,
-          message: `No students found for ${semester ? `Semester ${semester}` : standard || 'the selected criteria'}.`
-        });
+      if (targetStudents.length === 0) {
+        return res.status(400).json({ success: false, message: 'No students found for the selected criteria.' });
       }
 
-      // Class strength specified by Admin (e.g. 60 or 30 or 20)
-      const strength = Math.max(1, Number(classStrength) || 60);
-
-      // Available divisions: customized by Admin (e.g. ['A', 'B', 'C', 'D', 'E'])
-      const divs = (divisionsList && Array.isArray(divisionsList) && divisionsList.length > 0)
-        ? divisionsList.map(d => d.trim().toUpperCase())
-        : ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+      const divs = Array.isArray(divisionsList)
+        ? [...new Set(divisionsList.map(d => String(d).trim().toUpperCase()).filter(Boolean))]
+        : [];
+      if (divs.length === 0) {
+        return res.status(400).json({ success: false, message: 'Select at least one division before allocating students.' });
+      }
 
       const divisionSummary = {};
-
-      for (let i = 0; i < total; i++) {
-        // Group students according to class strength into divisions
-        const divIndex = Math.floor(i / strength);
-        const assignedDiv = divs[divIndex] || divs[divs.length - 1];
-
-        await User.findByIdAndUpdate(targetStudents[i]._id, {
-          $set: { division: assignedDiv, section: assignedDiv, divisionAllocated: true }
-        });
-
+      const updates = targetStudents.map((student, index) => {
+        const assignedDiv = divs[index % divs.length];
         divisionSummary[assignedDiv] = (divisionSummary[assignedDiv] || 0) + 1;
-      }
+        return {
+          updateOne: {
+            filter: { _id: student._id, createdByAdmin: tenantAdminId, role: 'student' },
+            update: { $set: { division: assignedDiv, section: assignedDiv, divisionAllocated: true } }
+          }
+        };
+      });
+      await User.bulkWrite(updates, { ordered: true });
 
-      const summaryText = Object.entries(divisionSummary)
-        .map(([div, count]) => `Div ${div}: ${count} students`)
-        .join(', ');
-
+      const summaryText = Object.entries(divisionSummary).map(([d, c]) => `Div ${d}: ${c}`).join(', ');
       return res.json({
         success: true,
-        message: `Auto-allocated ${total} students of ${semester ? `Sem ${semester}` : standard} (Strength: ${strength}/class) into: ${summaryText}.`,
+        message: `Auto-allocated ${targetStudents.length} students: ${summaryText}.`,
         summary: divisionSummary
       });
     } else {
-      // Manual Allocations: array of { studentId, division }
-      if (!allocations || !Array.isArray(allocations)) {
-        return res.status(400).json({ success: false, message: 'Valid allocations array required for manual mode' });
-      }
-
+      if (!allocations || !Array.isArray(allocations))
+        return res.status(400).json({ success: false, message: 'Allocations array required for manual mode.' });
       for (const item of allocations) {
         if (item.studentId && item.division) {
-          const div = item.division.toUpperCase();
-          await User.findByIdAndUpdate(item.studentId, {
-            $set: { division: div, section: div, divisionAllocated: true }
+          await User.findOneAndUpdate({
+            _id: item.studentId,
+            role: 'student',
+            institutionType: getInstitutionTypeFilter(normalizeInstitutionType(req.user.institutionType || 'institute')),
+            createdByAdmin: getTenantAdminId(req.user)
+          }, {
+            $set: { division: item.division.toUpperCase(), section: item.division.toUpperCase(), divisionAllocated: true }
           });
         }
       }
-
-      return res.json({
-        success: true,
-        message: `Updated divisions for ${allocations.length} students successfully.`
-      });
+      return res.json({ success: true, message: `Updated divisions for ${allocations.length} students.` });
     }
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Assign Teacher to Course & Synchronize Timetable Slots
+// ═══════════════════════════════════════════════════════════════════
+//  TEACHER & COURSE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════
+
 exports.assignTeacherToCourse = async (req, res) => {
   try {
     const { courseId, teacherId } = req.body;
-    if (!courseId || !teacherId) {
-      return res.status(400).json({ success: false, message: 'courseId and teacherId are required' });
+    if (!courseId || !teacherId)
+      return res.status(400).json({ success: false, message: 'courseId and teacherId are required.' });
+
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const targetCourse = await Course.findOne({ _id: courseId, createdByAdmin: tenantAdminId });
+    if (!targetCourse) return res.status(404).json({ success: false, message: 'Course not found or access denied.' });
+
+    const adminType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const teacher = await User.findOne({
+      _id: teacherId,
+      role: 'teacher',
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(adminType)
+    });
+    if (!teacher) {
+      return res.status(400).json({ success: false, message: 'Choose a teacher from your institution.' });
+    }
+    if (((adminType === 'institute' || adminType === 'diploma') &&
+          (teacher.branch || teacher.department) !== (targetCourse.branch || targetCourse.department)) ||
+        (adminType === 'pu_college' &&
+          (teacher.pucDept !== targetCourse.pucDept ||
+            (teacher.pucYear && teacher.pucYear !== targetCourse.pucYear)))) {
+      return res.status(400).json({ success: false, message: 'The teacher must belong to the course department.' });
     }
 
-    const updated = await Course.findByIdAndUpdate(
-      courseId,
-      { $set: { teacher: teacherId } },
-      { new: true }
-    ).populate('teacher', 'name teacherId email');
+    const identity = normalizeCourseIdentity(targetCourse.code, targetCourse.title);
+    const sectionedTitle = String(targetCourse.title || '').match(/^(.*?)(?:\s*-\s*|\s+)Section\s+([A-F])$/i);
+    const targetDivision = String(targetCourse.section || sectionedTitle?.[2] || '').toUpperCase();
+    const relatedCourseIds = [targetCourse._id];
 
-    // Also synchronize all corresponding timetable slots for this course
-    await Timetable.updateMany(
-      { course: courseId },
-      { $set: { teacher: teacherId } }
-    );
+    // 1-subject-per-teacher-per-semester constraint (scoped to this admin's courses)
+    const conflictCourse = await Course.findOne({
+      teacher: teacherId,
+      semester: targetCourse.semester,
+      branch: targetCourse.branch,
+      standard: targetCourse.standard,
+      pucYear: targetCourse.pucYear,
+      pucDept: targetCourse.pucDept,
+      section: targetDivision,
+      institutionType: targetCourse.institutionType,
+      createdByAdmin: tenantAdminId,
+      _id: { $nin: relatedCourseIds }
+    });
+    if (conflictCourse) {
+      const teacher = await User.findById(teacherId).select('name');
+      return res.status(400).json({
+        success: false,
+        message: `${teacher?.name || 'This teacher'} is already assigned to "${conflictCourse.code} - ${conflictCourse.title}" in Semester ${targetCourse.semester}. One teacher per subject per semester.`
+      });
+    }
 
+    await Course.updateOne({ _id: targetCourse._id, createdByAdmin: tenantAdminId }, {
+      $set: { teacher: teacherId, code: identity.code, title: identity.title, section: targetDivision }
+    });
+    if (targetCourse.semesterRef) {
+      const semesterConfig = await Semester.findOne({ _id: targetCourse.semesterRef, adminId: tenantAdminId });
+      if (semesterConfig) {
+        const subject = semesterConfig.subjects.find(item =>
+          normalizeCourseIdentity(item.code, item.title).code === identity.code &&
+          String(item.division || normalizeCourseIdentity(item.code, item.title).division).toUpperCase() === targetDivision
+        );
+        if (subject) subject.teacher = teacherId;
+        await semesterConfig.save();
+      }
+    }
+    const updated = await Course.findById(courseId)
+      .populate('teacher', 'name teacherId email');
+    await Timetable.updateMany({
+      course: { $in: relatedCourseIds },
+      institutionType: getInstitutionTypeFilter(adminType)
+    }, { $set: { teacher: teacherId } });
     return res.json({
       success: true,
-      message: `Assigned ${updated.teacher?.name} to ${updated.code} - ${updated.title}`,
+      message: `Assigned ${updated.teacher?.name} to ${identity.code}${targetDivision ? ` for Division ${targetDivision}` : ''}.`,
       course: updated
     });
   } catch (error) {
@@ -572,391 +1112,420 @@ exports.assignTeacherToCourse = async (req, res) => {
   }
 };
 
-// Get All Users (with filter by role, semester, standard, institutionType)
 exports.getUsers = async (req, res) => {
   try {
-    const { role, semester, standard, institutionType } = req.query;
-    const filter = {};
+    // Always scope to logged-in admin's institution type — never mix types
+    const adminUser = await User.findById(req.user._id);
+    const adminInstType = adminUser?.institutionType || 'institute';
+    const typeFilter = adminInstType === 'institute' || adminInstType === 'college'
+      ? { $in: ['institute', 'college'] }
+      : adminInstType;
+
+    const { role, semester, standard, branch, division, pucYear, pucDept, search } = req.query;
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const filter = { institutionType: typeFilter, createdByAdmin: tenantAdminId };
     if (role) filter.role = role;
+    if (role === 'admin') {
+      filter.$or = [{ createdByAdmin: tenantAdminId }, { _id: tenantAdminId }];
+    }
     if (semester) filter.semester = Number(semester);
     if (standard) filter.standard = standard;
-    if (institutionType) filter.institutionType = institutionType;
+    if (branch) filter.branch = branch;
+    if (division) filter.division = division.toUpperCase();
+    if (pucYear) filter.pucYear = pucYear;
+    if (pucDept) filter.pucDept = pucDept;
 
-    const users = await User.find(filter)
-      .select('-password')
-      .sort({ usn: 1, name: 1, createdAt: -1 });
+    if (search?.trim()) {
+      const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escapedSearch, 'i');
+      filter.$and = [{
+        $or: [
+        { name: searchRegex },
+        { email: searchRegex },
+        { usn: searchRegex },
+        { teacherId: searchRegex },
+        { adminId: searchRegex }
+        ]
+      }];
+    }
 
+    const projection = 'name email role adminId teacherId usn branch department semester standard pucYear pucDept section division faceRegistered isActive createdAt';
+    const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const query = User.find(filter).select(projection).sort({ usn: 1, name: 1, createdAt: -1 }).lean();
+
+    if (paginated) {
+      const [users, total] = await Promise.all([
+        query.skip((page - 1) * limit).limit(limit),
+        User.countDocuments(filter)
+      ]);
+      return res.json({
+        success: true,
+        users,
+        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+      });
+    }
+
+    const users = await query;
     return res.json({ success: true, users });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Toggle user active status
 exports.toggleUserStatus = async (req, res) => {
   try {
-    const { userId } = req.params;
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
+    const adminType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const user = await User.findOne({
+      _id: req.params.userId,
+      institutionType: getInstitutionTypeFilter(adminType),
+      createdByAdmin: tenantAdminId,
+      role: { $in: ['student', 'teacher'] }
+    });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
     user.isActive = !user.isActive;
     await user.save();
-
-    return res.json({
-      success: true,
-      message: `User ${user.name} is now ${user.isActive ? 'Active' : 'Deactivated'}`,
-      user: user.toSafeObject()
-    });
+    return res.json({ success: true, message: `${user.name} is now ${user.isActive ? 'Active' : 'Deactivated'}.`, user: user.toSafeObject() });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Create a new Course
 exports.createCourse = async (req, res) => {
   try {
-    const { code, title, department, semester, section, teacherId } = req.body;
-
-    if (!code || !title) {
-      return res.status(400).json({ success: false, message: 'Code and title are required' });
+    const adminUser = await User.findById(req.user._id);
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const { code, title, department, branch, semester, teacherId, section,
+            standard, pucYear, pucDept } = req.body;
+    if (!code || !title) return res.status(400).json({ success: false, message: 'Code and title are required.' });
+    const identity = normalizeCourseIdentity(code, title);
+    if (!identity.code || !identity.title) {
+      return res.status(400).json({ success: false, message: 'Course code and title must remain non-empty after removing any division suffix.' });
     }
 
-    const existingCourse = await Course.findOne({ code: code.trim().toUpperCase() });
-    if (existingCourse) {
-      return res.status(400).json({ success: false, message: 'Course code already exists' });
+    const instType = adminUser?.institutionType || 'institute';
+    const targetBranch = instType === 'school' || instType === 'pu_college'
+      ? ''
+      : branch || department || '';
+    const targetSemester = Number(semester) || 6;
+    const existingCourses = await Course.find({
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(instType),
+      branch: targetBranch,
+      semester: targetSemester,
+      standard: standard || '',
+      pucYear: pucYear || '',
+      pucDept: pucDept || '',
+      section: String(section || '').toUpperCase()
+    }).select('code title');
+    const existing = existingCourses.find(course => {
+      const currentIdentity = normalizeCourseIdentity(course.code, course.title);
+      return currentIdentity.code === identity.code && currentIdentity.title.toLowerCase() === identity.title.toLowerCase();
+    });
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message: `This semester already has the course "${identity.title}" with code ${identity.code}.`
+      });
+    }
+
+    let targetTeacher = null;
+    if (teacherId) {
+      targetTeacher = await User.findOne({
+        _id: teacherId,
+        role: 'teacher',
+        createdByAdmin: tenantAdminId,
+        institutionType: getInstitutionTypeFilter(instType)
+      });
+      if (!targetTeacher) {
+        return res.status(400).json({ success: false, message: 'Choose a teacher from your institution.' });
+      }
+      if (((instType === 'institute' || instType === 'diploma') &&
+            (targetTeacher.branch || targetTeacher.department) !== targetBranch) ||
+          (instType === 'pu_college' && targetTeacher.pucDept !== pucDept)) {
+        return res.status(400).json({ success: false, message: 'The teacher must belong to the course department.' });
+      }
+      const conflict = await Course.findOne({
+        teacher: teacherId, semester: targetSemester,
+        branch: targetBranch,
+        standard: standard || '',
+        pucYear: pucYear || '',
+        pucDept: pucDept || '',
+        section: String(section || '').toUpperCase(),
+        institutionType: getInstitutionTypeFilter(instType),
+        createdByAdmin: tenantAdminId
+      });
+      if (conflict) {
+        const teacher = await User.findById(teacherId).select('name');
+        return res.status(400).json({
+          success: false,
+          message: `${teacher?.name} is already assigned to "${conflict.code}" in Semester ${targetSemester}.`
+        });
+      }
     }
 
     const newCourse = new Course({
-      code: code.trim().toUpperCase(),
-      title: title.trim(),
-      department: department || 'Computer Science & Engineering',
-      semester: semester || 6,
-      section: section || 'A',
-      teacher: teacherId || null
+      code: identity.code,
+      title: identity.title,
+      department: instType === 'school' ? '' : instType === 'pu_college' ? pucDept || '' : targetBranch,
+      branch: targetBranch,
+      semester: targetSemester,
+      section: String(section || '').toUpperCase(),
+      teacher: targetTeacher?._id || null,
+      institutionType: instType,
+      standard: standard || '',
+      pucYear: pucYear || '',
+      pucDept: pucDept || '',
+      createdByAdmin: tenantAdminId
     });
-
     await newCourse.save();
-
-    return res.status(201).json({
-      success: true,
-      message: 'Course created successfully',
-      course: newCourse
-    });
+    return res.status(201).json({ success: true, message: 'Course created.', course: newCourse });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Get All Courses with populated teacher and student counts
 exports.getCourses = async (req, res) => {
   try {
-    const courses = await Course.find()
-      .populate('teacher', 'name teacherId email')
-      .populate('enrolledStudents', 'name usn');
+    // Only return courses created by THIS admin — no cross-institution leakage
+    const { branch, semester, standard, pucYear, pucDept, section } = req.query;
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    const filter = { createdByAdmin: tenantAdminId };
+    if (branch) filter.branch = branch;
+    if (semester) filter.semester = Number(semester);
+    if (standard) filter.standard = standard;
+    if (pucYear) filter.pucYear = pucYear;
+    if (pucDept) filter.pucDept = pucDept;
+    if (section) filter.section = String(section).toUpperCase();
 
+    const courses = await Course.find(filter)
+      .populate('teacher', 'name teacherId email');
     return res.json({ success: true, courses });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Seed Demo Data (Admin, Teachers, 60 Real Students, Courses, Timetable)
-exports.seedDemoData = async (req, res) => {
+// ─── GET Teacher's Timetable (for teacher dashboard) ─────────────────────────
+exports.getTeacherTimetable = async (req, res) => {
   try {
-    // 1. Ensure Admin exists
-    let admin = await User.findOne({ role: 'admin' });
-    if (!admin) {
-      admin = new User({
-        name: 'Super Admin',
-        email: 'admin@metricsedu.ac.in',
-        password: 'adminpassword123',
-        role: 'admin',
-        adminId: 'ADM-2026-001',
-        department: 'Institutional Administration'
-      });
-      await admin.save();
+    const teacherId = req.params.teacherId || req.user._id;
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    if (req.user.role === 'teacher' && teacherId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'You can only view your own timetable.' });
     }
 
-    // 2. Sample Faculty Teachers (Matching VTU / KLS GIT Scheme & Timetable)
-    const teacherData = [
-      { name: 'Prof. Pavan K.K', email: 'pavan.kk@metricsedu.ac.in', teacherId: 'TCH-101', department: 'Computer Science & Engineering' },
-      { name: 'Prof. Nandini C.V', email: 'nandini.cv@metricsedu.ac.in', teacherId: 'TCH-102', department: 'Computer Science & Engineering' },
-      { name: 'Dr. Jyoti Y. A', email: 'jyoti.ya@metricsedu.ac.in', teacherId: 'TCH-103', department: 'Computer Science & Engineering' },
-      { name: 'Dr. A. A. Quazi', email: 'aa.quazi@metricsedu.ac.in', teacherId: 'TCH-104', department: 'Computer Science & Engineering' },
-      { name: 'Prof. Mahalaxmi S.B', email: 'mahalaxmi.sb@metricsedu.ac.in', teacherId: 'TCH-105', department: 'Computer Science & Engineering' },
-      { name: 'Dr. Ramesh Sharma', email: 'ramesh.sharma@metricsedu.ac.in', teacherId: 'TCH-106', department: 'Artificial Intelligence & ML' },
-      { name: 'Prof. Vikram Joshi', email: 'vikram.joshi@metricsedu.ac.in', teacherId: 'TCH-107', department: 'Computer Networks & Systems' },
-      { name: 'Prof. Ananya Hegde', email: 'ananya.hegde@metricsedu.ac.in', teacherId: 'TCH-108', department: 'Data Science & Databases' }
-    ];
-
-    const createdTeachers = [];
-    for (const t of teacherData) {
-      let teacher = await User.findOne({ email: t.email });
-      if (!teacher) {
-        teacher = new User({
-          ...t,
-          password: 'teacherpassword123',
-          role: 'teacher'
-        });
-        await teacher.save();
-      }
-      createdTeachers.push(teacher);
-    }
-
-    // 3. Indian Student Names List for 60 Students
-    const indianStudentNames = [
-      'Aarav Patel', 'Bhavya Nair', 'Chirag Reddy', 'Divya Rao', 'Eshwar Gowda',
-      'Fatima Zohra', 'Gautam Kumar', 'Harini Sundaram', 'Ishaan Verma', 'Jaya Lakshmi',
-      'Kavya Menon', 'Lokesh Sharma', 'Meera Iyer', 'Nikhil Joshi', 'Omkar Patil',
-      'Pooja Hegde', 'Qasim Khan', 'Rohan Deshmukh', 'Sneha Nambiar', 'Tarun Bhat',
-      'Usha Rani', 'Varun Kulkarni', 'Wendy DSouza', 'Xavier Lobo', 'Yashasvi Raj',
-      'Zoya Siddiqui', 'Abhishek Das', 'Bindu Madhavi', 'Chetan Murthy', 'Deepa Shenoy', // Div A (1-30)
-      'Darshan Gowda', 'Ekta Kapoor', 'Farhan Akhtar', 'Geetha Ram', 'Hemanth Rao',
-      'Indira Devi', 'Jagadish Shettar', 'Kiran Kumar', 'Lavanya S', 'Manish Pandey',
-      'Nandini Reddy', 'Pranav Anand', 'Rashmika Mandanna', 'Sachin Tendulkar', 'Trisha Krishnan',
-      'Uday Kiran', 'Vidya Balan', 'Wasim Akram', 'Yamuna Prasad', 'Zaheer Khan',
-      'Akash Ambani', 'Bhumika Chawla', 'Charan Teja', 'Devi Sri', 'Esha Deol',
-      'Fahadh Faasil', 'Ganesh Hegde', 'Hansika Motwani', 'Imran Hashmi', 'Juhi Chawla' // Div B (31-60)
-    ];
-
-    const createdStudents = [];
-    for (let i = 0; i < 60; i++) {
-      const rollNum = (i + 1).toString().padStart(3, '0');
-      const usn = `1MS22CS${rollNum}`;
-      const name = indianStudentNames[i];
-      let division = 'A';
-      if (i < 20) division = 'A';
-      else if (i < 40) division = 'B';
-      else division = 'C';
-
-      const portraitIndex = (i % 8) + 1; // map across available portrait assets
-      const parentEmail = `parent.${name.toLowerCase().replace(/[^a-z]/g, '.')}.${rollNum}@gmail.com`;
-
-      let student = await User.findOne({ usn });
-      if (!student) {
-        student = new User({
-          name,
-          usn,
-          email: `${name.toLowerCase().replace(/[^a-z]/g, '.')}.${rollNum}@metricsedu.ac.in`,
-          parentsEmail: parentEmail,
-          password: 'studentpassword123',
-          role: 'student',
-          institutionType: 'college',
-          department: 'Computer Science & Engineering',
-          semester: 5,
-          section: division,
-          division: division,
-          divisionAllocated: true,
-          profileImage: `/uploads/students/student_${portraitIndex}.jpg`,
-          faceRegistered: true,
-          faceRegisteredAt: new Date(),
-          faceDescriptor: faceEngine.generateDeterministicDescriptor(usn),
-          lastConfidenceScore: Math.round(88 + (i % 10))
-        });
-        await student.save();
-      } else {
-        // Update division, profile & parent email
-        student.division = division;
-        student.section = division;
-        student.divisionAllocated = true;
-        student.parentsEmail = student.parentsEmail || parentEmail;
-        student.profileImage = `/uploads/students/student_${portraitIndex}.jpg`;
-        await student.save();
-      }
-      createdStudents.push(student);
-    }
-
-    // 4. Authentic 2022 Scheme Academic Courses (From PDF Pages 7-18)
-    const coursesData = [
-      // 3rd Semester
-      { code: '22MATCS31', title: 'Fundamentals of Statistics & Probability for Data Science', semester: 3, teacher: createdTeachers[7]._id },
-      { code: '22CS32', title: 'Software Engineering and Design', semester: 3, teacher: createdTeachers[0]._id },
-      { code: '22CS33', title: 'Object Oriented Programming using Java', semester: 3, teacher: createdTeachers[1]._id },
-      { code: '22CS34', title: 'Data Structures and Applications', semester: 3, teacher: createdTeachers[7]._id },
-      { code: '22CS352', title: 'Web Programming - A Practical Approach', semester: 3, teacher: createdTeachers[0]._id },
-      { code: '22AECCS371', title: 'Design Thinking', semester: 3, teacher: createdTeachers[4]._id },
-      { code: '22CSL39', title: 'Data Structures Laboratory using C', semester: 3, teacher: createdTeachers[7]._id },
-
-      // 4th Semester
-      { code: '22CS41', title: 'Operating Systems', semester: 4, teacher: createdTeachers[6]._id },
-      { code: '22CS42', title: 'Design and Analysis of Algorithms', semester: 4, teacher: createdTeachers[5]._id },
-      { code: '22CS43', title: 'Database Management Systems', semester: 4, teacher: createdTeachers[3]._id },
-      { code: '22CS441', title: 'Discrete Mathematical Structures and Graph Theory', semester: 4, teacher: createdTeachers[7]._id },
-      { code: '22CS46', title: 'Biology For Engineers', semester: 4, teacher: createdTeachers[4]._id },
-      { code: '22CS47', title: 'Universal Human Values', semester: 4, teacher: createdTeachers[4]._id },
-      { code: '22CSL49', title: 'Operating Systems Lab', semester: 4, teacher: createdTeachers[6]._id },
-
-      // 5th Semester (Aligned with Timetable)
-      { code: '22CS51', title: 'Software Project Management', semester: 5, teacher: createdTeachers[0]._id },
-      { code: '22CS52', title: 'Formal Languages and Automata Theory', semester: 5, teacher: createdTeachers[1]._id },
-      { code: '22CS53', title: 'Micro-Controllers and Embedded Systems', semester: 5, teacher: createdTeachers[2]._id },
-      { code: '22CS545', title: 'Data Warehousing and Data Mining', semester: 5, teacher: createdTeachers[3]._id },
-      { code: '22CS55', title: 'Research Based Mini Project', semester: 5, teacher: createdTeachers[0]._id },
-      { code: '22AECCS56', title: 'Research Methodology and Intellectual Property Rights', semester: 5, teacher: createdTeachers[4]._id },
-      { code: '22CS58A', title: 'Environmental Studies', semester: 5, teacher: createdTeachers[4]._id },
-      { code: '22CSL59', title: 'Micro-Controllers and Embedded Systems Laboratory', semester: 5, teacher: createdTeachers[2]._id },
-
-      // 6th Semester
-      { code: '22CS61', title: 'Artificial Intelligence and Machine Learning', semester: 6, teacher: createdTeachers[5]._id },
-      { code: '22CS62', title: 'Computer Networks', semester: 6, teacher: createdTeachers[6]._id },
-      { code: '22CS631', title: 'Agile Software Development', semester: 6, teacher: createdTeachers[0]._id },
-      { code: '22CS632', title: 'Digital Twin Technology', semester: 6, teacher: createdTeachers[6]._id },
-      { code: '22CS633', title: 'Internet of Things', semester: 6, teacher: createdTeachers[2]._id },
-      { code: '22CS635', title: 'Introduction to Salesforce', semester: 6, teacher: createdTeachers[1]._id },
-      { code: '22INT61', title: 'PwC Launchpad Program', semester: 6, teacher: createdTeachers[5]._id },
-      { code: '22CSL68', title: 'Computer Networks Lab', semester: 6, teacher: createdTeachers[6]._id },
-
-      // 7th Semester
-      { code: '22CS71', title: 'Big Data and Analytics', semester: 7, teacher: createdTeachers[3]._id },
-      { code: '22CS72', title: 'Unix System and Network Programming', semester: 7, teacher: createdTeachers[6]._id },
-      { code: '22CS73', title: 'Distributed and Cloud Computing', semester: 7, teacher: createdTeachers[5]._id },
-      { code: '22CS741', title: 'Cryptography and Network Security', semester: 7, teacher: createdTeachers[6]._id },
-      { code: '22CS742', title: 'Blockchain Management', semester: 7, teacher: createdTeachers[5]._id },
-      { code: '22CS744', title: 'Cyber Security', semester: 7, teacher: createdTeachers[6]._id },
-      { code: '22CS751', title: 'Disaster Management', semester: 7, teacher: createdTeachers[4]._id },
-      { code: '22CS76', title: 'Major Project Phase-II', semester: 7, teacher: createdTeachers[0]._id },
-      { code: '22AECCS77', title: 'Indian Knowledge System', semester: 7, teacher: createdTeachers[4]._id },
-
-      // 8th Semester
-      { code: '22CS811', title: 'Practical Cyber Security for Practitioners', semester: 8, teacher: createdTeachers[6]._id },
-      { code: '22CS813', title: 'Introduction to Machine Learning (NPTEL/Swayam)', semester: 8, teacher: createdTeachers[5]._id },
-      { code: '22CS814', title: 'Cloud Computing (NPTEL)', semester: 8, teacher: createdTeachers[5]._id },
-      { code: '22CS824', title: 'Ethical Hacking', semester: 8, teacher: createdTeachers[6]._id },
-      { code: '22CS83', title: 'Internship (Industry/Research) (14-20 Weeks)', semester: 8, teacher: createdTeachers[1]._id }
-    ];
-
-    // Remove old obsolete courses (e.g. CS601, CS602, CS603, CS604)
-    await Course.deleteMany({ code: { $in: ['CS601', 'CS602', 'CS603', 'CS604'] } });
-
-    const savedCourses = [];
-    for (const c of coursesData) {
-      let course = await Course.findOne({ code: c.code });
-      if (!course) {
-        course = new Course({
-          ...c,
-          department: 'Computer Science & Engineering',
-          section: 'A',
-          enrolledStudents: createdStudents.map(s => s._id)
-        });
-        await course.save();
-      } else {
-        course.title = c.title;
-        course.semester = c.semester;
-        course.teacher = c.teacher;
-        course.enrolledStudents = createdStudents.map(s => s._id);
-        await course.save();
-      }
-      savedCourses.push(course);
-    }
-
-    // 5. Generate Timetable using KLS GIT Timetable Scheme (Matching uploaded timetable for Div C)
-    await Timetable.deleteMany({});
-    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const timeSlots = [
-      '08:30 AM - 09:25 AM',
-      '09:25 AM - 10:20 AM',
-      '10:50 AM - 11:45 AM',
-      '11:45 AM - 12:40 PM',
-      '01:30 PM - 03:30 PM'
-    ];
-
-    // Filter 5th sem courses for primary timetable demo
-    const sem5Courses = savedCourses.filter(c => c.semester === 5);
-    const activeCourses = sem5Courses.length > 0 ? sem5Courses : savedCourses;
-    const courseMap = {};
-    savedCourses.forEach(c => { courseMap[c.code] = c; });
-
-    const timetableSlots = [];
-
-    // Div A & Div B balanced timetable
-    let slotIdx = 0;
-    for (const div of ['A', 'B']) {
-      for (const day of days) {
-        for (const slot of timeSlots) {
-          if (day === 'Saturday' && slot.startsWith('01')) continue;
-          const course = activeCourses[slotIdx % activeCourses.length];
-          timetableSlots.push({
-            day,
-            timeSlot: slot,
-            course: course._id,
-            teacher: course.teacher || createdTeachers[0]._id,
-            division: div,
-            classroom: div === 'A' ? 'Smart Lecture Hall LH-301 (Div A)' : 'Smart Lecture Hall LH-302 (Div B)',
-            semester: course.semester || 5
-          });
-          slotIdx++;
-        }
-      }
-    }
-
-    // Exact Schedule for Division C (Room AS-11, Class Coordinator: Prof. Nandini C.V, w.e.f. 21/09/2026)
-    const divCSchedule = [
-      // Monday
-      { day: 'Monday', timeSlot: '08:30 AM - 09:25 AM', code: '22AECCS56', classroom: 'Class Room: AS-11 (Div C)' }, // RMIPR
-      { day: 'Monday', timeSlot: '09:25 AM - 10:20 AM', code: '22CS58A', classroom: 'Class Room: AS-11 (Div C)' },   // EVS
-      { day: 'Monday', timeSlot: '10:50 AM - 11:45 AM', code: '22CS53', classroom: 'Class Room: AS-11 (Div C)' },    // MCES
-      { day: 'Monday', timeSlot: '11:45 AM - 12:40 PM', code: '22CS545', classroom: 'Class Room: AS-11 (Div C)' },   // PE (DWDM)
-
-      // Tuesday
-      { day: 'Tuesday', timeSlot: '08:30 AM - 09:25 AM', code: '22CS52', classroom: 'Class Room: AS-11 (Div C)' },   // FLAT
-      { day: 'Tuesday', timeSlot: '09:25 AM - 10:20 AM', code: '22CS51', classroom: 'Class Room: AS-11 (Div C)' },   // SPM
-      { day: 'Tuesday', timeSlot: '10:50 AM - 11:45 AM', code: '22CS53', classroom: 'Class Room: AS-11 (Div C)' },   // MCES
-      { day: 'Tuesday', timeSlot: '11:45 AM - 12:40 PM', code: '22CS545', classroom: 'Class Room: AS-11 (Div C)' },  // PE (DWDM)
-
-      // Wednesday
-      { day: 'Wednesday', timeSlot: '08:30 AM - 10:20 AM', code: '22CS52', classroom: 'Lab Number-2 (FLAT Lab)' },   // FLAT LAB [08:30-10:30]
-      { day: 'Wednesday', timeSlot: '10:50 AM - 11:45 AM', code: '22CS52', classroom: 'Class Room: AS-11 (Div C)' },  // FLAT
-      { day: 'Wednesday', timeSlot: '11:45 AM - 12:40 PM', code: '22CS53', classroom: 'Class Room: AS-11 (Div C)' },  // MCES
-      { day: 'Wednesday', timeSlot: '01:30 PM - 03:30 PM', code: '22CS545', classroom: 'Class Room: AS-11 (Div C)' }, // PE (DWDM)
-
-      // Thursday
-      { day: 'Thursday', timeSlot: '08:30 AM - 10:20 AM', code: '22CSL59', classroom: 'Lab Number-6 (MCES Lab)' },   // MCES LAB [08:30-10:30]
-      { day: 'Thursday', timeSlot: '10:50 AM - 11:45 AM', code: '22CS51', classroom: 'Class Room: AS-11 (Div C)' },   // SPM
-      { day: 'Thursday', timeSlot: '11:45 AM - 12:40 PM', code: '22CS53', classroom: 'Class Room: AS-11 (Div C)' },   // MCES
-
-      // Friday
-      { day: 'Friday', timeSlot: '08:30 AM - 09:25 AM', code: '22CS51', classroom: 'Class Room: AS-11 (Div C)' },    // SPM
-      { day: 'Friday', timeSlot: '09:25 AM - 10:20 AM', code: '22CS58A', classroom: 'Class Room: AS-11 (Div C)' },   // EVS
-      { day: 'Friday', timeSlot: '10:50 AM - 11:45 AM', code: '22AECCS56', classroom: 'Class Room: AS-11 (Div C)' }, // RMIPR
-      { day: 'Friday', timeSlot: '11:45 AM - 12:40 PM', code: '22CS52', classroom: 'Class Room: AS-11 (Div C)' },    // FLAT
-
-      // Saturday
-      { day: 'Saturday', timeSlot: '10:50 AM - 12:40 PM', code: '22CS55', classroom: 'Class Room: AS-11 (Div C)' }   // Research Based Mini Project
-    ];
-
-    for (const entry of divCSchedule) {
-      const course = courseMap[entry.code] || activeCourses[0];
-      timetableSlots.push({
-        day: entry.day,
-        timeSlot: entry.timeSlot,
-        course: course._id,
-        teacher: course.teacher || createdTeachers[0]._id,
-        division: 'C',
-        classroom: entry.classroom,
-        semester: 5
-      });
-    }
-
-    await Timetable.insertMany(timetableSlots);
-
-    return res.json({
-      success: true,
-      message: 'Demo dataset seeded with 60 students (Div A, B, C), KLS GIT 2022 Scheme Courses (Pages 7-18) & Timetables!',
-      stats: {
-        admin: admin.email,
-        teachersCount: createdTeachers.length,
-        studentsCount: createdStudents.length,
-        divisionACount: 20,
-        divisionBCount: 20,
-        divisionCCount: 20,
-        coursesCount: savedCourses.length,
-        timetableSlotsCount: timetableSlots.length
-      }
+    const teacher = await User.findOne({
+      _id: teacherId,
+      role: 'teacher',
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(actorType)
     });
+    if (!teacher) return res.status(404).json({ success: false, message: 'Teacher not found in your institution.' });
+
+    const departmentCourseFilter = {
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(actorType)
+    };
+    if (actorType === 'institute' || actorType === 'diploma') {
+      departmentCourseFilter.branch = teacher.branch || teacher.department;
+    } else if (actorType === 'pu_college') {
+      departmentCourseFilter.pucDept = teacher.pucDept || teacher.department;
+    } else if (teacher.standard) {
+      departmentCourseFilter.standard = teacher.standard;
+    }
+
+    const [departmentCourseIds, assignedCourseIds] = await Promise.all([
+      Course.find(departmentCourseFilter).distinct('_id'),
+      Course.find({ teacher: teacherId, createdByAdmin: tenantAdminId }).distinct('_id')
+    ]);
+    const [departmentSlots, slots] = await Promise.all([
+      Timetable.find({
+        course: { $in: departmentCourseIds },
+        institutionType: getInstitutionTypeFilter(actorType)
+      })
+        .populate('course', 'code title department branch semester standard pucYear pucDept')
+        .populate('teacher', 'name teacherId')
+        .sort({ semester: 1, standard: 1, pucYear: 1, division: 1, day: 1, startMinutes: 1 }),
+      Timetable.find({
+      teacher: teacherId,
+      course: { $in: assignedCourseIds },
+      institutionType: getInstitutionTypeFilter(actorType)
+      })
+        .populate('course', 'code title department branch semester standard pucYear pucDept')
+        .populate('teacher', 'name teacherId')
+        .sort({ semester: 1, standard: 1, pucYear: 1, division: 1, day: 1, startMinutes: 1 })
+    ]);
+    return res.json({ success: true, slots, assignedSlots: slots, departmentSlots });
   } catch (error) {
-    console.error('Seed error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── GET Current active slot for a teacher (for attendance locking) ──────────
+exports.getTeacherActiveSlot = async (req, res) => {
+  try {
+    const teacherId = req.params.teacherId || req.user._id;
+    const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    if (req.user.role === 'teacher' && teacherId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'You can only view your own timetable.' });
+    }
+    const teacher = await User.findOne({
+      _id: teacherId,
+      role: 'teacher',
+      createdByAdmin: tenantAdminId,
+      institutionType: getInstitutionTypeFilter(actorType)
+    });
+    if (!teacher) return res.status(404).json({ success: false, message: 'Teacher not found in your institution.' });
+
+    const now = new Date();
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const todayName = days[now.getDay()];
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const courseIds = await Course.find({ teacher: teacherId, createdByAdmin: tenantAdminId }).distinct('_id');
+
+    const todaySlots = await Timetable.find({
+      teacher: teacherId,
+      course: { $in: courseIds },
+      day: todayName,
+      institutionType: getInstitutionTypeFilter(actorType)
+    })
+      .populate('course', 'code title department branch semester')
+      .sort({ startMinutes: 1 });
+
+    let activeSlot = null;
+    let upcomingSlot = null;
+
+    for (const slot of todaySlots) {
+      const times = getTimetableSlotTimes(slot);
+      if (!times) continue;
+      const { start, end } = times;
+      const graceEnd = end + 30; // 30 min grace period for attendance
+
+      if (nowMinutes >= start && nowMinutes <= graceEnd) {
+        activeSlot = slot;
+        break;
+      }
+      if (nowMinutes < start && !upcomingSlot) {
+        upcomingSlot = slot;
+      }
+    }
+
+    return res.json({ success: true, activeSlot, upcomingSlot, todaySlots });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+//  SEED DEMO DATA
+// ═══════════════════════════════════════════════════════════════════
+
+// ── helper: random Indian name ───────────────────────────────────────────────
+// ─── FACULTY LOCATION TRACKER ────────────────────────────────────────────────
+// Returns real-time location of every teacher:
+//   • "In Class"  – if they have a timetable slot matching today + current time
+//   • "In Cabin"  – if no active slot right now
+exports.getFacultyTracker = async (req, res) => {
+  try {
+    const adminUser = await User.findById(req.user._id);
+    const adminInstType = adminUser?.institutionType || 'institute';
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+    const typeFilter = getInstitutionTypeFilter(adminInstType);
+    const courseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
+
+    const now = new Date();
+    const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const todayName = dayNames[now.getDay()];
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    // Only teachers of this admin's institution type
+    const teachers = await User.find({
+      role: 'teacher',
+      isActive: true,
+      institutionType: typeFilter,
+      createdByAdmin: tenantAdminId
+    })
+      .select('name teacherId email department branch profileImage')
+      .sort({ department: 1, name: 1 });
+
+    // Today's timetable slots scoped to this institution type
+    const todaySlots = await Timetable.find({
+      day: todayName,
+      institutionType: typeFilter,
+      course: { $in: courseIds }
+    })
+      .populate('course', 'code title semester branch')
+      .populate('teacher', '_id');
+
+    const result = teachers.map(t => {
+      const tid = t._id.toString();
+      const activeSlot = todaySlots.find(s => {
+        const assignedTeacherId = s.teacher?._id || s.teacher;
+        if (!assignedTeacherId || assignedTeacherId.toString() !== tid) return false;
+        const times = getTimetableSlotTimes(s);
+        if (!times) return false;
+        const { start, end } = times;
+        return nowMin >= start && nowMin <= end + 30;
+      });
+
+      const todaySchedule = todaySlots
+        .filter(s => {
+          const assignedTeacherId = s.teacher?._id || s.teacher;
+          return assignedTeacherId && assignedTeacherId.toString() === tid;
+        })
+        .map(s => {
+          const times = getTimetableSlotTimes(s);
+          return {
+            timeSlot: s.timeSlot,
+            subject: s.course?.code + ' — ' + s.course?.title,
+            semester: s.course?.semester,
+            branch: s.branch || s.course?.branch,
+            division: s.division,
+            classroom: s.classroom,
+            startMinutes: times?.start ?? null,
+            endMinutes: times?.end ?? null,
+            isActive: Boolean(times && nowMin >= times.start && nowMin <= times.end + 30)
+          };
+        })
+        .sort((a, b) => (a.startMinutes || 0) - (b.startMinutes || 0));
+
+      return {
+        _id: t._id, name: t.name, teacherId: t.teacherId, email: t.email,
+        department: t.department || t.branch, profileImage: t.profileImage,
+        status: activeSlot ? 'in_class' : 'in_cabin',
+        statusLabel: activeSlot ? 'In Class' : 'In Cabin',
+        activeClass: activeSlot ? {
+          timeSlot: activeSlot.timeSlot,
+          subject: activeSlot.course?.code + ' — ' + activeSlot.course?.title,
+          semester: activeSlot.course?.semester,
+          branch: activeSlot.branch || activeSlot.course?.branch,
+          division: activeSlot.division,
+          classroom: activeSlot.classroom
+        } : null,
+        todaySchedule
+      };
+    });
+
+    return res.json({ success: true, teachers: result, day: todayName, time: `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}` });
+  } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -1,16 +1,18 @@
 const User = require('../models/User');
 const AttendanceSession = require('../models/AttendanceSession');
 const Course = require('../models/Course');
+const { getStudentCohortFilter } = require('../config/institutions');
+const { saveUploadedFile } = require('../services/uploadService');
 
 // Register or Update Student Face Embedding
 exports.registerFace = async (req, res) => {
   try {
     const studentId = req.user._id;
     const { faceDescriptor } = req.body;
-    let profileImagePath = '';
+    let profileImagePath = req.body.profileImageUrl || '';
 
     if (req.file) {
-      profileImagePath = `/uploads/students/${req.file.filename}`;
+      profileImagePath = await saveUploadedFile(req.file, 'students');
     }
 
     // Ensure faceDescriptor is valid array of numbers
@@ -67,22 +69,24 @@ exports.getStudentDashboard = async (req, res) => {
     const studentId = req.user._id;
     const student = await User.findById(studentId);
 
-    // Find all courses student is enrolled in, or courses matching student's semester/department
-    let courses = await Course.find({
-      $or: [
-        { enrolledStudents: studentId },
-        { semester: student.semester, department: student.department }
-      ]
-    }).populate('teacher', 'name teacherId email');
-
-    // If no course explicitly assigned, fetch all active courses
-    if (courses.length === 0) {
-      courses = await Course.find().populate('teacher', 'name teacherId email');
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found.' });
+    if (!student.createdByAdmin) {
+      return res.status(403).json({ success: false, message: 'Student is not assigned to an institution.' });
     }
+
+    const courseFilter = {
+      ...getStudentCohortFilter(student),
+      createdByAdmin: student.createdByAdmin,
+      section: (student.section || student.division || 'A').toUpperCase()
+    };
+    const courses = await Course.find(courseFilter)
+      .populate('teacher', 'name teacherId email');
+    const courseIds = courses.map(course => course._id);
 
     // Find all attendance sessions containing this student
     const sessions = await AttendanceSession.find({
-      'records.student': studentId
+      'records.student': studentId,
+      course: { $in: courseIds }
     }).populate('course', 'code title').populate('teacher', 'name').sort({ sessionDate: -1 });
 
     // Compute subject-wise attendance breakdown

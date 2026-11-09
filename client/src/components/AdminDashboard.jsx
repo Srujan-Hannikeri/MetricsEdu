@@ -1,690 +1,1350 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  ShieldCheck, Users, School, GraduationCap, BookOpen, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ShieldCheck, Users, School, GraduationCap, BookOpen,
   BarChart3, CheckCircle2, XCircle, Plus, Sparkles, RefreshCw, Eye,
   Calendar, Clock, LayoutGrid, UserPlus, Lock, Unlock, ArrowRight, Trash2, Edit3,
-  FileText, FileSpreadsheet, Download, Camera, UserCheck
+  FileText, FileSpreadsheet, Download, Camera, UserCheck, ChevronRight, Settings,
+  Building2, Layers, Tag, AlertTriangle, Megaphone
 } from 'lucide-react';
 import { api } from '../services/api';
 import TimetableTable from './TimetableTable';
+import FacultyTrackerPage from './FacultyTrackerPage';
+import AcademicHub from './AcademicHub';
 import { downloadAttendance } from '../utils/exportUtils';
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+const COLLEGE_BRANCHES = [
+  'Computer Science & Engineering',
+  'Computer Science & Engineering (AI & ML)',
+  'Computer Science & Engineering (Data Science)',
+  'Information Science & Engineering',
+  'Electronics & Communication Engineering',
+  'Electrical & Electronics Engineering',
+  'Mechanical Engineering',
+  'Civil Engineering',
+  'Chemical Engineering',
+  'Biotechnology'
+];
+const COLLEGE_SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
+const SCHOOL_STANDARDS = [
+  '1st Std', '2nd Std', '3rd Std', '4th Std', '5th Std',
+  '6th Std', '7th Std', '8th Std', '9th Std', '10th Std',
+  '11th Std (PUC-I)', '12th Std (PUC-II)'
+];
+const DIVISIONS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const TIME_SLOTS = [
+  '08:30 AM - 09:25 AM', '09:25 AM - 10:20 AM', '10:50 AM - 11:45 AM',
+  '11:45 AM - 12:40 PM', '01:30 PM - 03:30 PM'
+];
+
+function getCourseIdentity(course) {
+  const sectionMatch = String(course.title || '').match(/^(.*?)(?:\s*-\s*|\s+)Section\s+([A-F])$/i);
+  const division = sectionMatch?.[2]?.toUpperCase();
+  const code = String(course.code || '');
+  const hasDivisionCode = division && code.toUpperCase().endsWith(division);
+  return {
+    code: hasDivisionCode ? code.replace(new RegExp(`[-_ ]?${division}$`, 'i'), '') : code,
+    title: sectionMatch ? sectionMatch[1].trim() : course.title,
+    division: String(course.division || course.section || division || '').toUpperCase()
+  };
+}
+
+function getCourseGroups(courses) {
+  const groups = new Map();
+  for (const course of courses) {
+    const identity = getCourseIdentity(course);
+    const key = [
+      course.branch, course.semester, course.standard, course.pucYear, course.pucDept,
+      identity.code.toUpperCase(), identity.title.toLowerCase(), identity.division
+    ].join('|');
+    const group = groups.get(key) || { ...identity, courses: [] };
+    group.courses.push(course);
+    groups.set(key, group);
+  }
+  return Array.from(groups.values());
+}
+
+function getSemesterSubjectGroups(subjects) {
+  const groups = new Map();
+  for (const subject of subjects) {
+    const identity = getCourseIdentity(subject);
+    const key = `${identity.code.toUpperCase()}|${identity.division}`;
+    const group = groups.get(key) || { ...identity, subjects: [] };
+    group.subjects.push({ ...subject, division: identity.division });
+    groups.set(key, group);
+  }
+  return Array.from(groups.values());
+}
+
 export default function AdminDashboard({ user }) {
-  // Navigation pages: 'overview' | 'timetable' | 'divisions' | 'teachers' | 'users' | 'attendance'
   const [activePage, setActivePage] = useState('overview');
   const [stats, setStats] = useState(null);
   const [loadingStats, setLoadingStats] = useState(true);
-  const [banner, setBanner] = useState('');
+  const [banner, setBanner] = useState({ type: '', msg: '' });
+  const showBanner = (msg, type = 'success') => { setBanner({ msg, type }); setTimeout(() => setBanner({ type: '', msg: '' }), 6000); };
 
-  // Institution Mode & Semester Selection (Sem/Std Wise Selection First!)
-  const [institutionMode, setInstitutionMode] = useState(user?.institutionType || 'college');
-  const [selectedSemester, setSelectedSemester] = useState(5);
+  // ── Institution mode — locked to admin's registered type, never toggleable ─
+  // Treat legacy 'college' as 'institute'
+  const rawMode = user?.institutionType || 'institute';
+  const institutionMode = rawMode === 'college' ? 'institute' : rawMode;
+
+  // Derived: which branches/semesters to show per institution type
+  const isInstitute = institutionMode === 'institute';
+  const isDiploma   = institutionMode === 'diploma';
+  const isSchool    = institutionMode === 'school';
+  const isPUC       = institutionMode === 'pu_college';
+  const hasBranchSem = isInstitute || isDiploma;
+
+  const ACTIVE_BRANCHES = isDiploma ? [
+    'Computer Science & Engineering',
+    'Information Science & Engineering',
+    'Electronics & Communication Engineering',
+    'Electrical & Electronics Engineering',
+    'Mechanical Engineering',
+    'Civil Engineering'
+  ] : COLLEGE_BRANCHES;
+
+  const ACTIVE_SEMESTERS = isDiploma ? [1,2,3,4,5,6] : COLLEGE_SEMESTERS;
+  const SCHOOL_STDS = ['1st Std','2nd Std','3rd Std','4th Std','5th Std',
+                       '6th Std','7th Std','8th Std','9th Std','10th Std'];
+  const PUC_YEARS = ['1st PUC','2nd PUC'];
+  const PUC_DEPTS_LIST = ['Science','Arts','Commerce'];
+
+  // ── Hierarchy selection ────────────────────────────────────────────────────
+  const [selectedBranch, setSelectedBranch] = useState(ACTIVE_BRANCHES[0]);
+  const [selectedSemester, setSelectedSemester] = useState(isDiploma ? 1 : isInstitute ? 5 : 1);
   const [selectedStandard, setSelectedStandard] = useState('10th Std');
+  const [selectedPucYear, setSelectedPucYear] = useState('1st PUC');
+  const [selectedPucDept, setSelectedPucDept] = useState('Science');
+  const [selectedDivisions, setSelectedDivisions] = useState(['A', 'B', 'C']);
+  const [selectedSubjectDivision, setSelectedSubjectDivision] = useState('A');
+  const [selectedTimetableDiv, setSelectedTimetableDiv] = useState('A');
+  const [selectedCourseDivision, setSelectedCourseDivision] = useState('A');
 
-  // Timetable State
+  // ── Semester config state ─────────────────────────────────────────────────
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  const [activeSemConfig, setActiveSemConfig] = useState(null);
+  const [semConfigForm, setSemConfigForm] = useState({ startDate: '', endDate: '', academicYear: '', pucYear: '1st PUC', pucDept: 'Science' });
+  const [showSemForm, setShowSemForm] = useState(false);
+  const [savingSem, setSavingSem] = useState(false);
+
+  // ── Subject management state ──────────────────────────────────────────────
+  const [subjectForm, setSubjectForm] = useState({ code: '', title: '', semesterHours: 60, teacherId: '' });
+  const [savingSubject, setSavingSubject] = useState(false);
+
+  // ── Timetable state ───────────────────────────────────────────────────────
   const [timetables, setTimetables] = useState([]);
-  const [selectedTimetableDiv, setSelectedTimetableDiv] = useState('C');
-  const [allocatedRoom, setAllocatedRoom] = useState('Class Room: AS-11');
-  const [allocatedCoordinator, setAllocatedCoordinator] = useState('Prof. Nandini C.V');
   const [loadingTimetable, setLoadingTimetable] = useState(false);
+  const [generatingTimetable, setGeneratingTimetable] = useState(false);
   const [showTimetableModal, setShowTimetableModal] = useState(false);
   const [ttDay, setTtDay] = useState('Monday');
-  const [ttSlot, setTtSlot] = useState('08:30 AM - 09:25 AM');
+  const [ttSlot, setTtSlot] = useState(TIME_SLOTS[0]);
   const [ttCourseId, setTtCourseId] = useState('');
   const [ttTeacherId, setTtTeacherId] = useState('');
-  const [ttClassroom, setTtClassroom] = useState('Class Room: AS-11 (Div C)');
+  const [ttClassroom, setTtClassroom] = useState('Class Room: AS-11');
 
-  // Lightbox Zoom Modal for Attendance Audit (Teacher Photo & Classroom Photo)
-  const [previewAuditModal, setPreviewAuditModal] = useState(null); // { url, title, subtitle }
-
-  // Divisions State (Semester Criteria, Admin Class Strength, Add New Divisions)
+  // ── Division allocator state ──────────────────────────────────────────────
   const [allocatorSemester, setAllocatorSemester] = useState(5);
   const [allocatorStandard, setAllocatorStandard] = useState('10th Std');
-  const [classStrength, setClassStrength] = useState(60);
-  const [availableDivisions, setAvailableDivisions] = useState(['A', 'B', 'C']);
+  const [availableDivisions, setAvailableDivisions] = useState(['A', 'B', 'C', 'D']);
   const [newDivName, setNewDivName] = useState('');
   const [studentsList, setStudentsList] = useState([]);
   const [divisionFilter, setDivisionFilter] = useState('ALL');
+  const [allocatorBranch, setAllocatorBranch] = useState(ACTIVE_BRANCHES[0]);
   const [isEditingDivisions, setIsEditingDivisions] = useState(false);
   const [divisionChanges, setDivisionChanges] = useState({});
   const [savingDivisions, setSavingDivisions] = useState(false);
 
-  // Users State
+  // ── Users / Students state ─────────────────────────────────────────────────
   const [users, setUsers] = useState([]);
-  const [roleFilter, setRoleFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('student');
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState('');
+  const [usersBranch, setUsersBranch] = useState('');
+  const [usersSemester, setUsersSemester] = useState('');
+  const [usersDivision, setUsersDivision] = useState('');
+  const [usersStandard, setUsersStandard] = useState('');
+  const [usersPucYear, setUsersPucYear] = useState('');
+  const [usersPucDept, setUsersPucDept] = useState('');
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersPagination, setUsersPagination] = useState({ total: 0, totalPages: 0 });
+  const usersRequestId = useRef(0);
 
-  // Courses & Teachers State
+  // ── Courses & Teachers state ──────────────────────────────────────────────
   const [courses, setCourses] = useState([]);
   const [teachersList, setTeachersList] = useState([]);
   const [showCourseModal, setShowCourseModal] = useState(false);
   const [newCourseCode, setNewCourseCode] = useState('');
   const [newCourseTitle, setNewCourseTitle] = useState('');
-  const [newCourseDept, setNewCourseDept] = useState('Computer Science & Engineering');
-  const [newCourseSem, setNewCourseSem] = useState(6);
-  const [newCourseSec, setNewCourseSec] = useState('A');
+  const [newCourseSem, setNewCourseSem] = useState(5);
   const [assignedTeacherId, setAssignedTeacherId] = useState('');
 
-  useEffect(() => {
-    loadStats();
-    loadCoursesAndTeachers();
-  }, []);
+  // ── Audit modal ───────────────────────────────────────────────────────────
+  const [previewAuditModal, setPreviewAuditModal] = useState(null);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  useEffect(() => { loadStats(); loadCoursesAndTeachers(); }, []);
 
   const loadStats = async () => {
     setLoadingStats(true);
-    try {
-      const data = await api.getAdminStats();
-      setStats(data.stats);
-    } catch (err) {
-      console.error('Error loading stats:', err);
-    } finally {
-      setLoadingStats(false);
-    }
+    try { const d = await api.getAdminStats(); setStats(d.stats); }
+    catch (e) { console.error(e); }
+    finally { setLoadingStats(false); }
   };
 
   const loadCoursesAndTeachers = async () => {
     try {
+      const courseParams = {};
+      if (hasBranchSem) { courseParams.branch = selectedBranch; courseParams.semester = selectedSemester; }
+      if (isSchool) courseParams.standard = selectedStandard;
+      if (isPUC) { courseParams.pucYear = selectedPucYear; courseParams.pucDept = selectedPucDept; }
+      const teacherParams = {};
+      if (hasBranchSem) teacherParams.branch = selectedBranch;
+      if (isPUC) teacherParams.pucDept = selectedPucDept;
       const [cData, uData] = await Promise.all([
-        api.getCourses(),
-        api.getUsers('teacher')
+        api.getCourses({ ...courseParams, institutionType: institutionMode }),
+        api.getUsers('teacher', teacherParams)
       ]);
       setCourses(cData.courses || []);
       setTeachersList(uData.users || []);
-      if (cData.courses?.length > 0) {
-        setTtCourseId(cData.courses[0]._id);
-      }
-      if (uData.users?.length > 0) {
-        setTtTeacherId(uData.users[0]._id);
-      }
-    } catch (err) {
-      console.error('Error loading courses/teachers:', err);
-    }
+      if (cData.courses?.length > 0) setTtCourseId(cData.courses[0]._id);
+      if (uData.users?.length > 0) setTtTeacherId(uData.users[0]._id);
+    } catch (e) { console.error(e); }
   };
 
-  // Load Timetable when switching to timetable page
+  // ── Reload courses whenever branch/sem changes ────────────────────────────
   useEffect(() => {
-    if (activePage === 'timetable') {
+    loadCoursesAndTeachers();
+  }, [selectedBranch, selectedSemester, selectedStandard, selectedPucYear, selectedPucDept]);
+
+  // ── Semester config loader ────────────────────────────────────────────────
+  // allBranchConfigs: ALL semester configs for the selected branch (to show scheduled indicators)
+  const [allBranchConfigs, setAllBranchConfigs] = useState([]);
+
+  const loadSemesterConfigs = async () => {
+    try {
+      // Load ALL configs for selected branch (to show scheduled badges on sem buttons)
+      const branchFilter = {};
+      if (hasBranchSem) { branchFilter.branch = selectedBranch; }
+      else if (isSchool) {} // no extra filter needed — getSemesters already scoped to admin
+      else if (isPUC) { branchFilter.pucDept = selectedPucDept; }
+
+      const allData = await api.getSemesters(branchFilter);
+      setAllBranchConfigs(allData.semesters || []);
+
+      // Filter for currently selected sem/standard/puc
+      const specificFilter = {};
+      if (hasBranchSem) { specificFilter.branch = selectedBranch; specificFilter.semesterNumber = selectedSemester; }
+      else if (isSchool) { specificFilter.standard = selectedStandard; }
+      else if (isPUC)   { specificFilter.pucYear = selectedPucYear; specificFilter.pucDept = selectedPucDept; }
+
+      const d = await api.getSemesters(specificFilter);
+      setSemesterConfigs(d.semesters || []);
+      const active = (d.semesters || []).find(s => s.isActive) || (d.semesters || [])[0] || null;
+      setActiveSemConfig(active);
+    } catch (e) { console.error(e); }
+  };
+
+  // Helper: is a given semester number already scheduled for current branch?
+  const isSemScheduled = (semNum) => {
+    return allBranchConfigs.some(c =>
+      c.semesterNumber === semNum &&
+      c.branch === selectedBranch &&
+      c.subjects?.length > 0
+    );
+  };
+
+  // Helper: get the config for a specific semNum (for the current branch)
+  const getConfigForSem = (semNum) => {
+    return allBranchConfigs.find(c =>
+      c.semesterNumber === semNum && c.branch === selectedBranch
+    ) || null;
+  };
+
+  useEffect(() => {
+    if (activePage === 'timetable' || activePage === 'schedule-setup') {
+      loadSemesterConfigs();
       loadTimetable(selectedTimetableDiv);
     }
-  }, [activePage, selectedTimetableDiv]);
+  }, [activePage, selectedBranch, selectedSemester, selectedStandard, selectedPucYear, selectedPucDept, institutionMode]);
 
   const loadTimetable = async (div) => {
     setLoadingTimetable(true);
     try {
-      const data = await api.getTimetables(div);
-      setTimetables(data.slots || []);
-    } catch (err) {
-      console.error('Error loading timetable:', err);
-    } finally {
-      setLoadingTimetable(false);
-    }
+      // Always pass semester + branch so query is scoped correctly
+      const semParam   = hasBranchSem ? selectedSemester : null;
+      const branchParam = hasBranchSem ? selectedBranch : null;
+      const stdParam   = isSchool ? selectedStandard : null;
+
+      const d = await api.getTimetables(
+        div, semParam, null, branchParam, stdParam, institutionMode,
+        isPUC ? selectedPucYear : null,
+        isPUC ? selectedPucDept : null
+      );
+      setTimetables(d.slots || []);
+    } catch (e) { console.error('loadTimetable error:', e); }
+    finally { setLoadingTimetable(false); }
   };
 
-  // Load Students for Division Allocator (Filtered by Semester or Standard)
   useEffect(() => {
-    if (activePage === 'divisions') {
-      loadStudentsForDivisions(allocatorSemester, allocatorStandard);
-    }
-  }, [activePage, allocatorSemester, allocatorStandard]);
+    const timeout = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 300);
+    return () => clearTimeout(timeout);
+  }, [userSearch]);
 
-  const loadStudentsForDivisions = async (targetSem = allocatorSemester, targetStd = allocatorStandard) => {
-    try {
-      const data = await api.getUsers('student', {
-        semester: institutionMode === 'college' ? targetSem : undefined,
-        standard: institutionMode === 'school' ? targetStd : undefined,
-        institutionType: institutionMode
-      });
-      setStudentsList(data.users || []);
-      const initialMap = {};
-      const presentDivs = new Set(availableDivisions);
-      (data.users || []).forEach(s => {
-        const d = s.division || s.section || 'A';
-        initialMap[s._id] = d;
-        presentDivs.add(d);
-      });
-      setDivisionChanges(initialMap);
-      setAvailableDivisions(Array.from(presentDivs).sort());
-    } catch (err) {
-      console.error('Error loading students for divisions:', err);
-    }
-  };
-
-  // Load Users when users page is opened
   useEffect(() => {
-    if (activePage === 'users') {
-      loadUsers(roleFilter);
-    }
-  }, [activePage, roleFilter]);
+    if (activePage === 'users') loadUsers();
+  }, [activePage, roleFilter, usersBranch, usersSemester, usersDivision, usersStandard, usersPucYear, usersPucDept, usersPage, debouncedUserSearch]);
 
-  const loadUsers = async (filter = '') => {
+  const loadUsers = async () => {
+    const requestId = ++usersRequestId.current;
     setLoadingUsers(true);
     try {
-      const data = await api.getUsers(filter);
-      setUsers(data.users || []);
-    } catch (err) {
-      console.error('Error loading users:', err);
+      const params = {};
+      if (hasBranchSem && usersBranch) params.branch = usersBranch;
+      if (isPUC && usersPucDept) params.pucDept = usersPucDept;
+      if (roleFilter === 'student') {
+        if (hasBranchSem && usersSemester) params.semester = usersSemester;
+        if (isSchool && usersStandard) params.standard = usersStandard;
+        if (isPUC && usersPucYear) params.pucYear = usersPucYear;
+        if (usersDivision) params.division = usersDivision;
+      }
+      params.page = usersPage;
+      params.limit = 50;
+      if (debouncedUserSearch) params.search = debouncedUserSearch;
+      const d = await api.getUsers(roleFilter || 'student', params);
+      if (requestId !== usersRequestId.current) return;
+      setUsers(d.users || []);
+      setUsersPagination(d.pagination || { total: (d.users || []).length, totalPages: 1 });
+    } catch (e) {
+      if (requestId === usersRequestId.current) console.error(e);
     } finally {
-      setLoadingUsers(false);
+      if (requestId === usersRequestId.current) setLoadingUsers(false);
     }
   };
 
-  // Automated Timetable Generator
-  const handleAutoGenerateTimetable = async () => {
-    if (!confirm(`Auto-generate full weekly schedule for Division ${selectedTimetableDiv}? This will create balanced classes Mon-Sat without clashes.`)) return;
+  useEffect(() => {
+    if (activePage === 'divisions') loadStudentsForDivisions();
+  }, [activePage, allocatorSemester, allocatorBranch, allocatorStandard, selectedPucYear, selectedPucDept]);
+
+  const loadStudentsForDivisions = async () => {
     try {
-      const res = await api.autoGenerateTimetable({ division: selectedTimetableDiv, semester: selectedSemester });
-      setBanner(res.message);
-      loadTimetable(selectedTimetableDiv, selectedSemester);
-      loadStats();
-    } catch (err) {
-      alert('Timetable error: ' + err.message);
-    }
+      const params = {};
+      if (hasBranchSem) { params.branch = allocatorBranch; params.semester = allocatorSemester; }
+      if (isSchool) params.standard = allocatorStandard;
+      if (isPUC) { params.pucYear = selectedPucYear; params.pucDept = selectedPucDept; }
+
+      const d = await api.getUsers('student', params);
+      setStudentsList(d.users || []);
+      const map = {};
+      const divSet = new Set(availableDivisions);
+      (d.users || []).forEach(s => { const div = s.division || 'A'; map[s._id] = div; divSet.add(div); });
+      setDivisionChanges(map);
+      setAvailableDivisions(Array.from(divSet).sort());
+    } catch (e) { console.error(e); }
   };
 
-  // Cell-by-cell Slot Update / Add
+  // ─── Semester config actions ───────────────────────────────────────────────
+  const handleCreateSemester = async (e) => {
+    e.preventDefault();
+    setSavingSem(true);
+    try {
+      // Build payload based on admin's institution type
+      const payload = {
+        startDate: semConfigForm.startDate,
+        endDate: semConfigForm.endDate,
+        academicYear: semConfigForm.academicYear,
+        ...(hasBranchSem ? { branch: selectedBranch, semesterNumber: selectedSemester } : {}),
+        ...(isSchool ? { standard: selectedStandard } : {}),
+        ...(isPUC ? { pucYear: selectedPucYear, pucDept: selectedPucDept } : {})
+      };
+      const d = await api.createSemester(payload);
+      showBanner(`Semester configured for ${semConfigForm.academicYear || 'academic year'}`);
+      setShowSemForm(false);
+      setSemConfigForm({ startDate: '', endDate: '', academicYear: '', pucYear: '1st PUC', pucDept: 'Science' });
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+    finally { setSavingSem(false); }
+  };
+
+  const handleDeleteSemester = async (id) => {
+    if (!confirm('Delete this semester configuration?')) return;
+    try { await api.deleteSemester(id); loadSemesterConfigs(); showBanner('Semester config deleted.'); }
+    catch (e) { showBanner(e.message, 'error'); }
+  };
+
+  const handleLockSemester = async (id) => {
+    if (!confirm('Lock this semester? No further edits will be allowed until you unlock it.')) return;
+    try {
+      const d = await api.lockSemester(id);
+      showBanner(d.message);
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+  };
+
+  const handleUnlockSemester = async (id) => {
+    try {
+      const d = await api.unlockSemester(id);
+      showBanner(d.message);
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+  };
+
+  // ─── Subject actions ──────────────────────────────────────────────────────
+  const handleAddSubject = async (e) => {
+    e.preventDefault();
+    if (!activeSemConfig) { showBanner('Create a semester configuration first.', 'error'); return; }
+    if (!subjectForm.code || !subjectForm.title) { showBanner('Subject code and title are required.', 'error'); return; }
+    setSavingSubject(true);
+    try {
+      const d = await api.addSubjectsToSemester(activeSemConfig._id, [{
+        code: subjectForm.code,
+        title: subjectForm.title,
+        semesterHours: Number(subjectForm.semesterHours) || 60,
+        division: selectedSubjectDivision,
+        teacherId: subjectForm.teacherId || null
+      }]);
+      showBanner(`Subject "${subjectForm.title}" added.`);
+      setSubjectForm({ code: '', title: '', semesterHours: 60, teacherId: '' });
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+    finally { setSavingSubject(false); }
+  };
+
+  const handleRemoveSubject = async (code) => {
+    if (!activeSemConfig) return;
+    if (!confirm(`Remove subject ${code}?`)) return;
+    try {
+      await api.removeSubjectFromSemester(activeSemConfig._id, code, selectedSubjectDivision);
+      showBanner(`Subject ${code} removed.`);
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+  };
+
+  const handleAssignSubjectTeacher = async (subjectCode, teacherId) => {
+    if (!activeSemConfig) return;
+    try {
+      const matchingSubjects = activeSemConfig.subjects.filter(s =>
+        getCourseIdentity(s).code.toUpperCase() === subjectCode.toUpperCase() &&
+        String(s.division || getCourseIdentity(s).division).toUpperCase() === selectedSubjectDivision
+      );
+      const sub = matchingSubjects[0] || activeSemConfig.subjects.find(s =>
+        getCourseIdentity(s).code.toUpperCase() === subjectCode.toUpperCase() &&
+        !getCourseIdentity(s).division
+      );
+      if (!sub) return;
+      await api.addSubjectsToSemester(activeSemConfig._id, [{
+        code: getCourseIdentity(sub).code, title: getCourseIdentity(sub).title, semesterHours: sub.semesterHours,
+        weeklyHours: sub.weeklyHours, division: selectedSubjectDivision, teacherId: teacherId || null, replaceTeacher: true
+      }]);
+      showBanner(`Teacher assigned to ${subjectCode}.`);
+      loadSemesterConfigs();
+    } catch (e) { showBanner(e.message, 'error'); }
+  };
+
+  // ─── Timetable auto-generate ──────────────────────────────────────────────
+  const handleAutoGenerateTimetable = async () => {
+    if (selectedDivisions.length === 0) { showBanner('Select at least one division.', 'error'); return; }
+    if (!activeSemConfig) { showBanner('Please set up the semester dates and add subjects first.', 'error'); return; }
+    const divLabel = selectedDivisions.join(', ');
+    if (!confirm(`Generate timetable for Division(s) ${divLabel}?\n\nThis will replace existing schedules for these divisions.\n\nConstraints enforced:\n• 1 teacher = 1 subject per semester\n• No teacher double-booking\n• ≥15 min teacher break between classes\n• No classroom conflicts`)) return;
+    setGeneratingTimetable(true);
+    try {
+      const payload = {
+        divisions: selectedDivisions,
+        semesterId: activeSemConfig?._id,
+        institutionType: institutionMode,
+        ...(hasBranchSem ? { semester: selectedSemester, branch: selectedBranch } : {}),
+        ...(isSchool ? { standard: selectedStandard } : {}),
+        ...(isPUC ? { pucYear: selectedPucYear, pucDept: selectedPucDept } : {})
+      };
+      const res = await api.autoGenerateTimetable(payload);
+      showBanner(
+        res.warnings?.length ? `${res.message} ${res.warnings.join(' ')}` : res.message,
+        res.warnings?.length ? 'error' : 'success'
+      );
+      loadTimetable(selectedTimetableDiv);
+      loadStats();
+    } catch (e) { showBanner(e.message, 'error'); }
+    finally { setGeneratingTimetable(false); }
+  };
+
   const handleUpdateOrAddSlot = async (slotData) => {
     try {
+      const cohortFields = {
+        institutionType: institutionMode,
+        ...(hasBranchSem ? { semester: selectedSemester, branch: selectedBranch } : {}),
+        ...(isSchool ? { standard: selectedStandard } : {}),
+        ...(isPUC ? { pucYear: selectedPucYear, pucDept: selectedPucDept } : {})
+      };
       if (slotData.isNew) {
         await api.createTimetableEntry({
-          day: slotData.day,
-          timeSlot: slotData.timeSlot,
-          courseId: slotData.courseId,
-          teacherId: slotData.teacherId,
+          day: slotData.day, timeSlot: slotData.timeSlot,
+          courseId: slotData.courseId, teacherId: slotData.teacherId,
           division: slotData.division || selectedTimetableDiv,
-          classroom: slotData.classroom || allocatedRoom,
-          semester: selectedSemester
+          classroom: slotData.classroom || 'Class Room: AS-11',
+          ...cohortFields
         });
-        setBanner(`Allocated ${slotData.day} ${slotData.timeSlot} slot successfully.`);
+        showBanner(`Slot added: ${slotData.day} ${slotData.timeSlot}`);
       } else {
-        await api.updateTimetableEntry(slotData.slotId, {
-          day: slotData.day,
-          timeSlot: slotData.timeSlot,
-          course: slotData.courseId,
-          teacher: slotData.teacherId,
-          classroom: slotData.classroom
-        });
-        setBanner(`Updated ${slotData.day} ${slotData.timeSlot} slot.`);
+        await api.updateTimetableEntry(slotData.slotId, { ...slotData, ...cohortFields });
+        showBanner(`Slot updated: ${slotData.day} ${slotData.timeSlot}`);
       }
-      loadTimetable(selectedTimetableDiv, selectedSemester);
-      loadStats();
-    } catch (err) {
-      alert('Error updating slot: ' + err.message);
-    }
+      loadTimetable(selectedTimetableDiv);
+    } catch (e) { showBanner(e.message, 'error'); }
   };
 
-  // Manual Add Timetable Entry
+  const handleDeleteTimetableSlot = async (id) => {
+    if (!confirm('Delete this timetable slot?')) return;
+    try { await api.deleteTimetableEntry(id); loadTimetable(selectedTimetableDiv); }
+    catch (e) { showBanner(e.message, 'error'); }
+  };
+
   const handleCreateTimetableSlot = async (e) => {
     e.preventDefault();
     try {
       await api.createTimetableEntry({
-        day: ttDay,
-        timeSlot: ttSlot,
-        courseId: ttCourseId,
-        teacherId: ttTeacherId,
-        division: selectedTimetableDiv,
-        classroom: ttClassroom,
-        semester: 6
+        day: ttDay, timeSlot: ttSlot, courseId: ttCourseId, teacherId: ttTeacherId,
+        division: selectedTimetableDiv, classroom: ttClassroom,
+        institutionType: institutionMode,
+        ...(hasBranchSem ? { semester: selectedSemester, branch: selectedBranch } : {}),
+        ...(isSchool ? { standard: selectedStandard } : {}),
+        ...(isPUC ? { pucYear: selectedPucYear, pucDept: selectedPucDept } : {})
       });
       setShowTimetableModal(false);
-      setBanner(`Added ${ttDay} ${ttSlot} lecture slot.`);
+      showBanner(`Slot added: ${ttDay} ${ttSlot}`);
       loadTimetable(selectedTimetableDiv);
-      loadStats();
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (e) { showBanner(e.message, 'error'); }
   };
 
-  // Delete Timetable Slot
-  const handleDeleteTimetableSlot = async (id) => {
-    if (!confirm('Delete this timetable lecture slot?')) return;
-    try {
-      await api.deleteTimetableEntry(id);
-      loadTimetable(selectedTimetableDiv);
-      loadStats();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  // Auto Allocate Divisions (Based on Semester and Admin Class Strength)
+  // ─── Division allocation ──────────────────────────────────────────────────
   const handleAutoAllocateDivisions = async () => {
-    const semOrStd = institutionMode === 'college' ? `${allocatorSemester}th Semester` : allocatorStandard;
-    const strength = Number(classStrength) || 60;
-    if (!confirm(`Run automated division allocator for ${semOrStd}? Students will be divided into classes with max strength of ${strength} students per division.`)) return;
+    const label = hasBranchSem ? `${allocatorBranch} Sem ${allocatorSemester}` : isSchool ? allocatorStandard : `${selectedPucYear} ${selectedPucDept}`;
+    if (!availableDivisions.length) { showBanner('Select at least one division.', 'error'); return; }
+    if (!confirm(`Split students of ${label} as evenly as possible across ${availableDivisions.join(', ')}?`)) return;
     try {
       const res = await api.allocateDivisions({
         mode: 'auto',
-        semester: institutionMode === 'college' ? allocatorSemester : undefined,
-        standard: institutionMode === 'school' ? allocatorStandard : undefined,
+        semester: hasBranchSem ? allocatorSemester : undefined,
+        branch: hasBranchSem ? allocatorBranch : undefined,
+        standard: isSchool ? allocatorStandard : undefined,
         institutionType: institutionMode,
-        classStrength: strength,
-        divisionsList: availableDivisions
+        divisionsList: availableDivisions,
+        pucYear: isPUC ? selectedPucYear : undefined,
+        pucDept: isPUC ? selectedPucDept : undefined
       });
-      setBanner(res.message);
-      loadStudentsForDivisions(allocatorSemester, allocatorStandard);
-      setIsEditingDivisions(false);
-    } catch (err) {
-      alert(err.message);
-    }
+      showBanner(res.message);
+      loadStudentsForDivisions();
+    } catch (e) { showBanner(e.message, 'error'); }
   };
 
-  // Add a new division (e.g. D, E, F)
-  const handleAddDivision = (e) => {
-    e.preventDefault();
-    const trimmed = newDivName.trim().toUpperCase();
-    if (!trimmed) return;
-    if (availableDivisions.includes(trimmed)) {
-      alert(`Division ${trimmed} already exists!`);
-      return;
-    }
-    setAvailableDivisions([...availableDivisions, trimmed].sort());
-    setNewDivName('');
-    setBanner(`Added Division ${trimmed} to available divisions! You can now allocate students to Division ${trimmed}.`);
-  };
-
-  // Save Manual Division Allocations
   const handleSaveManualDivisions = async () => {
     setSavingDivisions(true);
     try {
-      const allocations = Object.entries(divisionChanges).map(([studentId, division]) => ({
-        studentId,
-        division
-      }));
+      const allocations = Object.entries(divisionChanges).map(([studentId, division]) => ({ studentId, division }));
       const res = await api.allocateDivisions({ mode: 'manual', allocations });
-      setBanner(res.message);
+      showBanner(res.message);
       setIsEditingDivisions(false);
       loadStudentsForDivisions();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSavingDivisions(false);
-    }
+    } catch (e) { showBanner(e.message, 'error'); }
+    finally { setSavingDivisions(false); }
   };
 
-  // Assign Teacher to Course
   const handleAssignTeacher = async (courseId, teacherId) => {
     try {
       const res = await api.assignTeacherToCourse(courseId, teacherId);
-      setBanner(res.message);
+      showBanner(res.message);
       loadCoursesAndTeachers();
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (e) { showBanner(e.message, 'error'); }
   };
 
-  // Toggle user active status
+  const getAvailableTeachers = (division, subjectCode = '') => {
+    const targetCode = String(subjectCode).trim().toUpperCase();
+    const targetDivision = String(division || '').toUpperCase();
+    const unavailable = new Set();
+    const markBusy = (teacherValue, itemCode, itemDivision) => {
+      const teacherId = String(teacherValue?._id || teacherValue || '');
+      const assignedDivision = String(itemDivision || '').toUpperCase();
+      if (!teacherId || (assignedDivision && assignedDivision !== targetDivision) ||
+          (targetCode && String(itemCode || '').toUpperCase() === targetCode)) return;
+      unavailable.add(teacherId);
+    };
+
+    courses.forEach(course => {
+      const identity = getCourseIdentity(course);
+      markBusy(course.teacher, identity.code, identity.division);
+    });
+    (activeSemConfig?.subjects || []).forEach(subject => {
+      const identity = getCourseIdentity(subject);
+      markBusy(subject.teacher, identity.code, subject.division || identity.division);
+    });
+    return teachersList.filter(teacher => !unavailable.has(String(teacher._id)));
+  };
+
   const handleToggleStatus = async (userId) => {
-    try {
-      const data = await api.toggleUserStatus(userId);
-      setBanner(data.message);
-      loadUsers(roleFilter);
-    } catch (err) {
-      alert(err.message);
-    }
+    try { const d = await api.toggleUserStatus(userId); showBanner(d.message); loadUsers(roleFilter); }
+    catch (e) { showBanner(e.message, 'error'); }
   };
 
-  // Seed Demo 60 Students & Divisions
-  const handleSeedData = async () => {
-    if (!confirm('Populate 60 students with real portraits, Divisions A & B, and Timetables?')) return;
-    try {
-      const res = await api.seedDemoData();
-      setBanner(res.message);
-      loadStats();
-      loadCoursesAndTeachers();
-      if (activePage === 'timetable') loadTimetable(selectedTimetableDiv);
-      if (activePage === 'divisions') loadStudentsForDivisions();
-      if (activePage === 'users') loadUsers(roleFilter);
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+  // ── Filtered students ─────────────────────────────────────────────────────
+  const filteredStudents = divisionFilter === 'ALL'
+    ? studentsList
+    : studentsList.filter(s => (s.division || s.section || 'A') === divisionFilter);
+  const allCourseGroups = getCourseGroups(courses);
+  const explicitlyConfiguredCourseCodes = new Set(allCourseGroups
+    .filter(group => group.division === selectedCourseDivision)
+    .map(group => group.code.toUpperCase()));
+  const courseGroups = allCourseGroups.filter(group =>
+    group.division === selectedCourseDivision ||
+    (!group.division && !explicitlyConfiguredCourseCodes.has(group.code.toUpperCase()))
+  );
+  const timetableCoursesForDivision = courses.filter(course =>
+    String(course.section || '').toUpperCase() === selectedTimetableDiv
+  );
+  const timetableCourses = timetableCoursesForDivision.length
+    ? timetableCoursesForDivision
+    : courses.filter(course => !course.section);
+  const allSemesterSubjectGroups = getSemesterSubjectGroups(activeSemConfig?.subjects || []);
+  const explicitlyConfiguredCodes = new Set(allSemesterSubjectGroups
+    .filter(group => group.division === selectedSubjectDivision)
+    .map(group => group.code.toUpperCase()));
+  const semesterSubjectGroups = allSemesterSubjectGroups.filter(group =>
+    group.division === selectedSubjectDivision ||
+    (!group.division && !explicitlyConfiguredCodes.has(group.code.toUpperCase()))
+  );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      
-      {/* Top Header */}
+
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="p-1 px-2.5 rounded-lg bg-rose-500/15 text-rose-400 font-mono text-xs font-bold border border-rose-500/30">
-              INSTITUTION ADMIN
-            </span>
-            <span className="text-xs text-slate-400 font-mono">Admin ID: {user?.adminId}</span>
+            <span className="p-1 px-2.5 rounded-lg bg-rose-500/15 text-rose-400 font-mono text-xs font-bold border border-rose-500/30">INSTITUTION ADMIN</span>
+            <span className="text-xs text-slate-400 font-mono">ID: {user?.adminId}</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">
-            MetricsEdu Institutional Management
-          </h1>
-          <p className="text-xs sm:text-sm text-cyan-200/70 font-medium">
-            One Connected Platform. One Smart Classroom.
-          </p>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">MetricsEdu Institutional Management</h1>
+          <p className="text-xs sm:text-sm text-cyan-200/70 font-medium">One Connected Platform. One Smart Classroom.</p>
         </div>
-
-        {/* Action Controls & Seed */}
         <div className="flex items-center gap-2.5">
-          <button
-            onClick={handleSeedData}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#00a896]/15 text-[#00C49F] border border-[#00a896]/40 hover:bg-[#00a896]/25 text-xs font-bold transition-all shadow-sm"
-          >
-            <Sparkles className="w-4 h-4 text-[#00C49F]" />
-            Seed 60 Students & Timetables
-          </button>
+          {/* Institution type badge — read-only, locked to admin's registered type */}
+          {(() => {
+            const badges = {
+              institute:  { label: '🏛️ Engineering Institute', cls: 'text-[#38bdf8] border-cyan-500/40 bg-cyan-500/10' },
+              diploma:    { label: '📐 Diploma (Polytechnic)', cls: 'text-amber-300 border-amber-500/40 bg-amber-500/10' },
+              pu_college: { label: '📚 PU College', cls: 'text-purple-300 border-purple-500/40 bg-purple-500/10' },
+              school:     { label: '🏫 School (1–10th Std)', cls: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' }
+            };
+            const b = badges[institutionMode] || badges.institute;
+            return (
+              <span className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${b.cls}`}>{b.label}</span>
+            );
+          })()}
         </div>
       </div>
 
-      {/* Primary Page Navigation Tabs (Clicking any tab cleanly opens that dedicated page) */}
+      {/* Navigation tabs */}
       <div className="flex flex-wrap items-center gap-2 bg-[#071b34] p-2 rounded-2xl border border-[#133966] shadow-md">
         {[
-          { id: 'overview', label: 'Overview & KPIs', icon: BarChart3 },
-          { id: 'timetable', label: 'Timetable Manager', icon: Calendar },
-          { id: 'divisions', label: 'Division Allocator', icon: Users },
-          { id: 'teachers', label: 'Assign Teachers & Courses', icon: School },
-          { id: 'users', label: 'Students & Biometrics', icon: GraduationCap },
+          { id: 'overview', label: 'Overview', icon: BarChart3 },
+          { id: 'schedule-setup', label: 'Schedule Setup', icon: Settings },
+          { id: 'timetable', label: 'Timetable', icon: Calendar },
+          { id: 'divisions', label: 'Divisions', icon: Users },
+          { id: 'faculty-tracker', label: 'Faculty Tracker', icon: UserCheck },
+          { id: 'courses', label: 'Courses', icon: BookOpen },
+          { id: 'calendar', label: 'Academic Calendar', icon: Calendar },
+          { id: 'announcements', label: 'Announcements', icon: Megaphone },
+          { id: 'users', label: 'Students', icon: GraduationCap },
           { id: 'attendance', label: 'Attendance Audit', icon: ShieldCheck }
-        ].map((tab) => {
+        ].map(tab => {
           const Icon = tab.icon;
           const isActive = activePage === tab.id;
           return (
-            <button
-              key={tab.id}
-              onClick={() => { setActivePage(tab.id); setBanner(''); }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                isActive
-                  ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-                  : 'text-slate-300 hover:text-white hover:bg-[#0b2444]'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {tab.label}
+            <button key={tab.id} onClick={() => { setActivePage(tab.id); setBanner({ type: '', msg: '' }); }}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${isActive
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
+                : 'text-slate-300 hover:text-white hover:bg-[#0b2444]'}`}>
+              <Icon className="w-4 h-4" />{tab.label}
             </button>
           );
         })}
       </div>
 
-      {banner && (
-        <div className="p-4 rounded-2xl bg-[#00a896]/15 border border-[#00a896]/40 text-[#67e8f9] text-xs sm:text-sm flex items-center justify-between shadow-lg">
+      {/* Banner */}
+      {banner.msg && (
+        <div className={`p-4 rounded-2xl border text-xs sm:text-sm flex items-center justify-between shadow-lg ${banner.type === 'error'
+          ? 'bg-red-500/15 border-red-500/40 text-red-300'
+          : 'bg-[#00a896]/15 border-[#00a896]/40 text-[#67e8f9]'}`}>
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-[#00C49F]" />
-            <span>{banner}</span>
+            {banner.type === 'error' ? <AlertTriangle className="w-4 h-4 text-red-400" /> : <CheckCircle2 className="w-4 h-4 text-[#00C49F]" />}
+            <span>{banner.msg}</span>
           </div>
-          <button onClick={() => setBanner('')} className="text-xs text-[#00C49F] font-mono">Dismiss</button>
+          <button onClick={() => setBanner({ type: '', msg: '' })} className="text-xs font-mono opacity-70 hover:opacity-100">✕</button>
         </div>
       )}
 
-      {/* ========================================================
-          PAGE 1: OVERVIEW & INTERACTIVE STATS
-      ======================================================== */}
+      {/* ====================================================================
+          PAGE: OVERVIEW
+      ==================================================================== */}
       {activePage === 'overview' && (
         <div className="space-y-8">
-          
-          {/* Interactive KPI Cards: Clicking ANY card opens that specific dedicated page */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            
-            {/* Card 1: Students -> Opens 'users' page */}
-            <div 
-              onClick={() => setActivePage('users')}
-              className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all"
-            >
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">Total Students</span>
-                <GraduationCap className="w-4 h-4 text-[#38bdf8]" />
-              </div>
-              <div className="text-3xl font-black font-mono text-white mt-2 group-hover:text-[#00C49F]">
-                {stats?.totalStudents || 60}
-              </div>
-              <div className="text-[11px] text-[#00C49F] mt-2 font-mono flex items-center justify-between">
-                <span>{stats?.faceRegistrationRate || 100}% Biometrics Enrolled</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </div>
-
-            {/* Card 2: Faculty -> Opens 'teachers' page */}
-            <div 
-              onClick={() => setActivePage('teachers')}
-              className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all"
-            >
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">Faculty Teachers</span>
-                <School className="w-4 h-4 text-[#00C49F]" />
-              </div>
-              <div className="text-3xl font-black font-mono text-white mt-2 group-hover:text-[#00C49F]">
-                {stats?.totalTeachers || 4}
-              </div>
-              <div className="text-[11px] text-cyan-200 mt-2 font-mono flex items-center justify-between">
-                <span>Assigned to Subjects</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </div>
-
-            {/* Card 3: Timetable -> Opens 'timetable' page */}
-            <div 
-              onClick={() => setActivePage('timetable')}
-              className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all"
-            >
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">Timetable Slots</span>
-                <Calendar className="w-4 h-4 text-amber-400" />
-              </div>
-              <div className="text-3xl font-black font-mono text-white mt-2 group-hover:text-[#00C49F]">
-                {stats?.totalTimetableSlots || 50}
-              </div>
-              <div className="text-[11px] text-slate-300 mt-2 font-mono flex items-center justify-between">
-                <span>Div A & Div B Scheduled</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </div>
-
-            {/* Card 4: Attendance Rate -> Opens 'attendance' page */}
-            <div 
-              onClick={() => setActivePage('attendance')}
-              className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all"
-            >
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">Institutional Attendance</span>
-                <BarChart3 className="w-4 h-4 text-[#00C49F]" />
-              </div>
-              <div className="text-3xl font-black font-mono text-[#00C49F] mt-2">
-                {stats?.avgAttendance || 88}%
-              </div>
-              <div className="text-[11px] text-cyan-200 mt-2 font-mono flex items-center justify-between">
-                <span>Daily Class Logs</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </div>
-
+            {[
+              { label: 'Total Students', value: stats?.totalStudents ?? 60, sub: `${stats?.faceRegistrationRate ?? 100}% Biometrics`, icon: GraduationCap, color: 'text-[#38bdf8]', page: 'users' },
+              { label: 'Faculty', value: stats?.totalTeachers ?? 8, sub: 'Assigned to Subjects', icon: School, color: 'text-[#00C49F]', page: 'teachers' },
+              { label: 'Timetable Slots', value: stats?.totalTimetableSlots ?? 0, sub: 'All Divisions', icon: Calendar, color: 'text-amber-400', page: 'timetable' },
+              { label: 'Avg Attendance', value: `${stats?.avgAttendance ?? 0}%`, sub: 'Institutional Average', icon: BarChart3, color: 'text-[#00C49F]', page: 'attendance' }
+            ].map(card => {
+              const Icon = card.icon;
+              return (
+                <div key={card.label} onClick={() => setActivePage(card.page)}
+                  className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">{card.label}</span>
+                    <Icon className={`w-4 h-4 ${card.color}`} />
+                  </div>
+                  <div className="text-3xl font-black font-mono text-white mt-2 group-hover:text-[#00C49F]">{card.value}</div>
+                  <div className="text-[11px] text-[#00C49F] mt-2 font-mono flex items-center justify-between">
+                    <span>{card.sub}</span>
+                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Quick Operations Hub */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div 
-              onClick={() => setActivePage('timetable')}
-              className="p-6 rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all"
-            >
-              <Calendar className="w-8 h-8 text-[#00C49F] mb-3" />
-              <h3 className="text-base font-bold text-white">Create & Auto-Generate Timetables</h3>
-              <p className="text-xs text-slate-300 mt-1">
-                Configure weekly lecture routines, room assignments, and generate clash-free schedules in 1 click.
-              </p>
-            </div>
-
-            <div 
-              onClick={() => setActivePage('divisions')}
-              className="p-6 rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all"
-            >
-              <Users className="w-8 h-8 text-[#38bdf8] mb-3" />
-              <h3 className="text-base font-bold text-white">Student Division Allocations</h3>
-              <p className="text-xs text-slate-300 mt-1">
-                Put 60 students into Division A and Division B. Done once automatically or edited manually anytime.
-              </p>
-            </div>
-
-            <div 
-              onClick={() => setActivePage('teachers')}
-              className="p-6 rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all"
-            >
-              <School className="w-8 h-8 text-amber-400 mb-3" />
-              <h3 className="text-base font-bold text-white">Assign Teachers to Subjects</h3>
-              <p className="text-xs text-slate-300 mt-1">
-                Map faculty lecturers to departments, curriculum courses, and monitor classroom vision usage.
-              </p>
-            </div>
+            {[
+              { page: 'schedule-setup', icon: Settings, color: 'text-[#00C49F]', title: 'Schedule Setup Wizard', desc: 'Step 1: Set semester dates → Step 2: Add subjects → Step 3: Auto-generate timetable for all divisions.' },
+              { page: 'divisions', icon: Users, color: 'text-[#38bdf8]', title: 'Student Division Allocator', desc: 'Auto-split students into Div A, B, C by class strength. Manual overrides anytime.' },
+              { page: 'faculty-tracker', icon: School, color: 'text-amber-400', title: 'Faculty Location Tracker', desc: 'See every teacher in real time — whether in class or in cabin, which subject, division, branch and semester.' }
+            ].map(c => {
+              const Icon = c.icon;
+              return (
+                <div key={c.page} onClick={() => setActivePage(c.page)}
+                  className="p-6 rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all">
+                  <Icon className={`w-8 h-8 ${c.color} mb-3`} />
+                  <h3 className="text-base font-bold text-white">{c.title}</h3>
+                  <p className="text-xs text-slate-300 mt-1">{c.desc}</p>
+                </div>
+              );
+            })}
           </div>
 
+          {/* Recent Sessions */}
+          {stats?.recentSessions?.length > 0 && (
+            <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl">
+              <h2 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><Clock className="w-4 h-4 text-[#00C49F]" /> Recent Attendance Sessions</h2>
+              <div className="space-y-2">
+                {stats.recentSessions.slice(0, 5).map(s => (
+                  <div key={s._id} className="flex items-center justify-between p-3 rounded-xl bg-[#040d1a] border border-[#133966]">
+                    <div>
+                      <span className="text-xs font-bold text-white">{s.course?.code} — {s.teacher?.name}</span>
+                      <div className="text-[11px] text-slate-400">{new Date(s.sessionDate).toLocaleDateString()} · {s.timeSlot}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs font-bold text-[#00C49F]">{s.attendancePercentage}%</div>
+                      <div className="text-[10px] text-slate-400">{s.totalPresent}/{s.totalEnrolled} present</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <AcademicHub user={user} adminCohort={{
+            branch: hasBranchSem ? selectedBranch : '',
+            semester: hasBranchSem ? selectedSemester : null,
+            standard: isSchool ? selectedStandard : '',
+            pucYear: isPUC ? selectedPucYear : '',
+            pucDept: isPUC ? selectedPucDept : ''
+          }} page="calendar" />
         </div>
       )}
 
-      {/* ========================================================
-          PAGE 2: TIMETABLE MANAGER (MANUAL & AUTOMATED)
-      ======================================================== */}
-      {activePage === 'timetable' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm space-y-6">
-          
-          {/* STEP 1: SELECT SEMESTER / STANDARD FIRST (MANDATORY SELECTION STEP) */}
-          <div className="p-4 rounded-2xl bg-[#040d1a] border border-[#133966] flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/30">
-                <BookOpen className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-200 block">
-                  Step 1: Select Academic Level First
-                </span>
-                <span className="text-sm font-bold text-white">
-                  {institutionMode === 'school' ? 'Select School Standard / Class' : 'Select College Semester Curriculum'}
-                </span>
-              </div>
-            </div>
+      {/* ====================================================================
+          PAGE: SCHEDULE SETUP WIZARD
+          Hierarchy: Branch → Sem → Date config → Add Subjects → Generate
+      ==================================================================== */}
+      {activePage === 'schedule-setup' && (
+        <div className="space-y-6">
 
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Institution Type Strict Display: If Institutional, ONLY Semesters appear; If School, ONLY Standards appear */}
-              {institutionMode === 'college' ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold text-slate-300">Degree & Branch:</span>
-                  <span className="text-xs font-mono font-bold text-cyan-200 bg-[#071b34] px-2.5 py-1.5 rounded-xl border border-[#133966]">
-                    B.E. Computer Science & Engineering
-                  </span>
-                  <label className="text-xs font-bold text-slate-300 ml-1">Select Semester:</label>
-                  <select
-                    value={selectedSemester}
-                    onChange={(e) => {
-                      const sem = Number(e.target.value);
-                      setSelectedSemester(sem);
-                      loadTimetable(selectedTimetableDiv, sem);
-                    }}
-                    className="bg-[#071b34] border border-[#00a896]/50 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-                  >
-                    {[3, 4, 5, 6, 7, 8].map((s) => (
-                      <option key={s} value={s}>
-                        {s}th Semester {s === 5 ? '(KLS GIT Scheme - Active)' : ''}
-                      </option>
-                    ))}
+          {/* Step 0: Hierarchy selector */}
+          <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Layers className="w-5 h-5 text-[#00C49F]" />
+              <h2 className="text-base font-bold text-white">Step 1 — Select Academic Level</h2>
+            </div>
+            <p className="text-xs text-slate-400">Choose the branch/standard before setting dates and subjects.</p>
+
+            {/* Institute or Diploma — branch + semester */}
+            {hasBranchSem && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Branch / Programme</label>
+                  <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                    className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                    {ACTIVE_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold text-slate-300">School Level:</span>
-                  <span className="text-xs font-mono font-bold text-cyan-200 bg-[#071b34] px-2.5 py-1.5 rounded-xl border border-[#133966]">
-                    K-12 School Curriculum
-                  </span>
-                  <label className="text-xs font-bold text-slate-300 ml-1">Select Standard / Class:</label>
-                  <select
-                    value={selectedStandard}
-                    onChange={(e) => {
-                      setSelectedStandard(e.target.value);
-                    }}
-                    className="bg-[#071b34] border border-[#00a896]/50 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-                  >
-                    {['1st Std', '2nd Std', '3rd Std', '4th Std', '5th Std', '6th Std', '7th Std', '8th Std', '9th Std', '10th Std', '11th Std (PUC-I)', '12th Std (PUC-II)'].map((std) => (
-                      <option key={std} value={std}>{std}</option>
-                    ))}
-                  </select>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Semester ({isDiploma ? '1–6' : '1–8'})</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ACTIVE_SEMESTERS.map(s => {
+                      const scheduled = isSemScheduled(s);
+                      const isSelected = selectedSemester === s;
+                      return (
+                        <button key={s} onClick={() => setSelectedSemester(s)}
+                          className={`relative px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                            isSelected
+                              ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]'
+                              : scheduled
+                                ? 'border-[#00a896]/60 text-[#00C49F] bg-[#00a896]/10 hover:bg-[#00a896]/20'
+                                : 'border-[#133966] text-slate-300 hover:border-[#00C49F] hover:text-white'
+                          }`}>
+                          Sem {s}
+                          {scheduled && !isSelected && (
+                            <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-[#00C49F] border-2 border-[#071b34] flex items-center justify-center">
+                              <span className="text-[#040d1a] text-[7px] font-black">✓</span>
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1.5 text-[10px] text-slate-500 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-[#00C49F] inline-block" />
+                    Teal border = already scheduled
+                  </div>
                 </div>
-              )}
+              </div>
+            )}
+
+            {/* School — standard 1st–10th */}
+            {isSchool && (
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Standard / Class (1st–10th)</label>
+                <div className="flex flex-wrap gap-2">
+                  {SCHOOL_STDS.map(std => {
+                    const scheduled = allBranchConfigs.some(c => c.standard === std && c.subjects?.length > 0);
+                    const isSelected = selectedStandard === std;
+                    return (
+                      <button key={std} onClick={() => setSelectedStandard(std)}
+                        className={`relative px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                          isSelected
+                            ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]'
+                            : scheduled
+                              ? 'border-[#00a896]/60 text-[#00C49F] bg-[#00a896]/10'
+                              : 'border-[#133966] text-slate-300 hover:border-[#00C49F]'
+                        }`}>
+                        {std}
+                        {scheduled && !isSelected && (
+                          <span className="absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full bg-[#00C49F] border-2 border-[#071b34] flex items-center justify-center">
+                            <span className="text-[#040d1a] text-[7px] font-black">✓</span>
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* PU College — year + dept */}
+            {isPUC && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">PUC Year</label>
+                  <div className="flex gap-2">
+                    {PUC_YEARS.map(y => (
+                      <button key={y} onClick={() => setSelectedPucYear(y)}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedPucYear === y
+                          ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]'
+                          : 'border-[#133966] text-slate-300 hover:border-[#00C49F]'}`}>
+                        {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Department</label>
+                  <div className="flex gap-2">
+                    {PUC_DEPTS_LIST.map(d => (
+                      <button key={d} onClick={() => setSelectedPucDept(d)}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedPucDept === d
+                          ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]'
+                          : 'border-[#133966] text-slate-300 hover:border-[#00C49F]'}`}>
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="p-3 rounded-xl bg-[#040d1a] border border-[#133966] text-xs text-cyan-200 flex items-center gap-2">
+              <ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" />
+              Currently configuring:&nbsp;
+              <strong className="text-white">
+                {hasBranchSem ? `${selectedBranch} — Semester ${selectedSemester}` :
+                 isSchool ? selectedStandard :
+                 isPUC ? `${selectedPucYear} — ${selectedPucDept}` : ''}
+              </strong>
             </div>
           </div>
 
-          {/* STEP 2: TIMETABLE CONTROLS & DIVISION SELECTOR */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
-            <div>
+          {/* Step 2: Semester dates */}
+          <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-[#00C49F]" />
-                <h2 className="text-lg font-extrabold text-white">
-                  Timetable Sheet (Editable Matrix Form)
-                </h2>
+                <h2 className="text-base font-bold text-white">Step 2 — Set Semester Start & End Dates</h2>
               </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Exact timetable format matching institutional standard. Fully editable by Admin. Visible to all teachers and students.
-              </p>
+              {/* Only show "Add Dates" if no config exists yet for this sem */}
+              {semesterConfigs.length === 0 && (
+                <button onClick={() => setShowSemForm(v => !v)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00C49F]/20 text-[#00C49F] border border-[#00C49F]/40 text-xs font-bold hover:bg-[#00C49F]/30 transition-all">
+                  <Plus className="w-3.5 h-3.5" /> Add Dates
+                </button>
+              )}
             </div>
 
-            {/* Division Switcher & Generation Controls (Nothing is locked, everything editable by Admin) */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex bg-[#040d1a] p-1 rounded-xl border border-[#133966]">
-                <button
-                  onClick={() => {
-                    setSelectedTimetableDiv('A');
-                    loadTimetable('A', selectedSemester);
+            {/* Add new semester form */}
+            {showSemForm && semesterConfigs.length === 0 && (
+              <form onSubmit={handleCreateSemester} className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Academic Year</label>
+                  <input type="text" placeholder="e.g. 2025-26" value={semConfigForm.academicYear}
+                    onChange={e => setSemConfigForm(p => ({ ...p, academicYear: e.target.value }))}
+                    className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">Start Date *</label>
+                  <input type="date" required value={semConfigForm.startDate}
+                    onChange={e => setSemConfigForm(p => ({ ...p, startDate: e.target.value }))}
+                    className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-300 mb-1.5 block">End Date *</label>
+                  <input type="date" required value={semConfigForm.endDate}
+                    onChange={e => setSemConfigForm(p => ({ ...p, endDate: e.target.value }))}
+                    className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                </div>
+                <div className="md:col-span-3 flex gap-3">
+                  <button type="submit" disabled={savingSem}
+                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50">
+                    {savingSem ? 'Saving...' : 'Save Semester Dates'}
+                  </button>
+                  <button type="button" onClick={() => setShowSemForm(false)} className="px-4 py-2 rounded-xl bg-[#0b2444] text-slate-300 text-xs font-bold border border-[#133966]">Cancel</button>
+                </div>
+              </form>
+            )}
+
+            {semesterConfigs.length > 0 ? (
+              <div className="space-y-2">
+                {semesterConfigs.map(sc => (
+                  <div key={sc._id} onClick={() => !sc.isLocked && setActiveSemConfig(sc)}
+                    className={`p-4 rounded-2xl border transition-all ${activeSemConfig?._id === sc._id
+                      ? 'border-[#00C49F] bg-[#00a896]/10'
+                      : sc.isLocked
+                        ? 'border-amber-500/40 bg-amber-500/5 cursor-not-allowed'
+                        : 'border-[#133966] bg-[#040d1a] hover:border-[#00a896]/50 cursor-pointer'}`}>
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-white">{sc.academicYear || 'Academic Year TBD'}</span>
+                          {sc.isActive && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#00C49F]/20 text-[#00C49F] border border-[#00C49F]/30">ACTIVE</span>}
+                          {sc.isLocked
+                            ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1"><Lock className="w-2.5 h-2.5" /> LOCKED</span>
+                            : <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1"><Unlock className="w-2.5 h-2.5" /> UNLOCKED</span>}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          📅 <strong className="text-white">{new Date(sc.startDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}</strong>
+                          &nbsp;→&nbsp;
+                          <strong className="text-white">{new Date(sc.endDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}</strong>
+                          &nbsp;·&nbsp; {sc.subjects.length} subject{sc.subjects.length !== 1 ? 's' : ''} configured
+                        </div>
+                        {sc.isLocked && sc.lockedAt && (
+                          <div className="text-[10px] text-amber-400 mt-0.5">
+                            Locked on {new Date(sc.lockedAt).toLocaleDateString('en-IN')}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {activeSemConfig?._id === sc._id && <CheckCircle2 className="w-4 h-4 text-[#00C49F]" />}
+                        {sc.isLocked ? (
+                          <button onClick={e => { e.stopPropagation(); handleUnlockSemester(sc._id); }}
+                            className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 flex items-center gap-1 transition-all">
+                            <Unlock className="w-3 h-3" /> Unlock to Edit
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={e => { e.stopPropagation(); setActiveSemConfig(sc); setShowSemForm(true); setSemConfigForm({ startDate: sc.startDate?.slice(0,10) || '', endDate: sc.endDate?.slice(0,10) || '', academicYear: sc.academicYear || '', pucYear: sc.pucYear || '1st PUC', pucDept: sc.pucDept || 'Science' }); }}
+                              className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-[#071b34] text-slate-300 border border-[#133966] hover:border-[#00C49F] hover:text-[#00C49F] flex items-center gap-1 transition-all">
+                              <Edit3 className="w-3 h-3" /> Edit Dates
+                            </button>
+                            <button onClick={e => { e.stopPropagation(); handleLockSemester(sc._id); }}
+                              className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/30 hover:bg-[#00a896]/30 flex items-center gap-1 transition-all">
+                              <Lock className="w-3 h-3" /> Save & Lock
+                            </button>
+                          </>
+                        )}
+                        <button onClick={e => { e.stopPropagation(); handleDeleteSemester(sc._id); }}
+                          disabled={sc.isLocked}
+                          className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Inline edit form for dates — shows when Edit Dates is clicked */}
+                    {showSemForm && activeSemConfig?._id === sc._id && !sc.isLocked && (
+                      <form onSubmit={async (e) => {
+                        e.preventDefault();
+                        setSavingSem(true);
+                        try {
+                          await api.updateSemester(sc._id, {
+                            startDate: semConfigForm.startDate,
+                            endDate: semConfigForm.endDate,
+                            academicYear: semConfigForm.academicYear
+                          });
+                          showBanner('Semester dates updated.');
+                          setShowSemForm(false);
+                          loadSemesterConfigs();
+                        } catch (err) { showBanner(err.message, 'error'); }
+                        finally { setSavingSem(false); }
+                      }} className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-xl bg-[#040d1a] border border-[#133966]" onClick={e => e.stopPropagation()}>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 mb-1 block">Academic Year</label>
+                          <input type="text" placeholder="e.g. 2025-26" value={semConfigForm.academicYear}
+                            onChange={e => setSemConfigForm(p => ({ ...p, academicYear: e.target.value }))}
+                            className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 mb-1 block">Start Date *</label>
+                          <input type="date" required value={semConfigForm.startDate}
+                            onChange={e => setSemConfigForm(p => ({ ...p, startDate: e.target.value }))}
+                            className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-semibold text-slate-400 mb-1 block">End Date *</label>
+                          <input type="date" required value={semConfigForm.endDate}
+                            onChange={e => setSemConfigForm(p => ({ ...p, endDate: e.target.value }))}
+                            className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+                        </div>
+                        <div className="md:col-span-3 flex gap-2">
+                          <button type="submit" disabled={savingSem}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50">
+                            {savingSem ? 'Updating...' : 'Update Dates'}
+                          </button>
+                          <button type="button" onClick={() => setShowSemForm(false)}
+                            className="px-4 py-2 rounded-xl bg-[#0b2444] text-slate-300 text-xs font-bold border border-[#133966]">Cancel</button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-slate-400 text-xs">
+                No semester configured yet. Click "Add Dates" to set the semester duration.
+              </div>
+            )}
+          </div>
+
+          {/* Step 3: Add subjects */}
+          <div className={`bg-[#071b34]/95 border rounded-3xl p-6 shadow-xl space-y-4 transition-all ${
+            !activeSemConfig ? 'border-[#133966]/50 opacity-60 pointer-events-none' :
+            activeSemConfig.isLocked ? 'border-amber-500/30' : 'border-[#133966]'
+          }`}>
+            <div className="flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-[#00C49F]" />
+              <h2 className="text-base font-bold text-white">Step 3 — Add Subjects & Assign Teachers</h2>
+              {!activeSemConfig && <span className="text-xs text-amber-400 ml-2">(complete Step 2 first)</span>}
+              {activeSemConfig?.isLocked && (
+                <span className="ml-auto flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                  <Lock className="w-3 h-3" /> Locked — unlock to edit
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400">
+              Subjects and course codes are semester-wide and shared by the selected divisions; do not add a division to the subject name or code. Enter total teaching hours for the semester. The timetable spreads them across Mon–Sat using 1-hour classes (up to 2 hours when needed).
+            </p>
+
+            <div className="rounded-2xl bg-[#040d1a] border border-[#133966] p-4">
+              <label className="text-xs font-semibold text-slate-300 mb-2 block">Division group for these subjects</label>
+              <div className="flex flex-wrap gap-2">
+                {DIVISIONS.map(div => (
+                  <button key={div} type="button" onClick={() => {
+                    setSelectedDivisions(prev =>
+                      prev.includes(div) ? prev.filter(value => value !== div) : [...prev, div]
+                    );
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    selectedTimetableDiv === 'A'
-                      ? 'bg-[#00C49F] text-[#040d1a] shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Division A
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedTimetableDiv('B');
-                    loadTimetable('B', selectedSemester);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    selectedTimetableDiv === 'B'
-                      ? 'bg-[#00C49F] text-[#040d1a] shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Division B
-                </button>
-                <button
-                  onClick={() => {
-                    setSelectedTimetableDiv('C');
-                    loadTimetable('C', selectedSemester);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    selectedTimetableDiv === 'C'
-                      ? 'bg-[#00C49F] text-[#040d1a] shadow-sm'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Division C
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedDivisions.includes(div)
+                      ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]'
+                      : 'border-[#133966] text-slate-300 hover:border-[#00C49F] hover:text-white'}`}>
+                    Division {div}
+                  </button>
+                ))}
+              </div>
+              <label className="block mt-4 max-w-xs">
+                <span className="text-xs font-semibold text-slate-300 mb-1 block">Configure subjects and teachers for division</span>
+                <select value={selectedSubjectDivision} onChange={event => setSelectedSubjectDivision(event.target.value)}
+                  className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  {DIVISIONS.map(div => <option key={div} value={div}>Division {div}</option>)}
+                </select>
+              </label>
+              <div className="text-[10px] text-slate-400 mt-2">
+                Teacher assignments are saved only for Division {selectedSubjectDivision}; the subject code and name stay the same across divisions.
+              </div>
+            </div>
+
+            {/* Add subject form - hidden when locked */}
+            {!activeSemConfig?.isLocked && (
+            <form onSubmit={handleAddSubject} className="grid grid-cols-1 md:grid-cols-5 gap-3 p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Subject Code *</label>
+                <input type="text" placeholder="e.g. CS501 (same for every division)" value={subjectForm.code}
+                  onChange={e => setSubjectForm(p => ({ ...p, code: e.target.value, teacherId: '' }))}
+                  className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Subject Title *</label>
+                <input type="text" placeholder="e.g. Data Structures" value={subjectForm.title}
+                  onChange={e => setSubjectForm(p => ({ ...p, title: e.target.value }))}
+                  className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Hours / Semester</label>
+                <input type="number" min="1" max="1000" value={subjectForm.semesterHours}
+                  onChange={e => setSubjectForm(p => ({ ...p, semesterHours: e.target.value }))}
+                  className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-300 mb-1 block">Assign Teacher</label>
+                <select value={subjectForm.teacherId} onChange={e => setSubjectForm(p => ({ ...p, teacherId: e.target.value }))}
+                  className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">— Select —</option>
+                  {getAvailableTeachers(selectedSubjectDivision, subjectForm.code).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                  {getAvailableTeachers(selectedSubjectDivision, subjectForm.code).length === 0 && <option disabled>No available teachers</option>}
+                </select>
+              </div>
+              <div className="md:col-span-5 flex gap-2">
+                <button type="submit" disabled={savingSubject}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" /> {savingSubject ? 'Adding...' : 'Add Subject'}
                 </button>
               </div>
+            </form>
+            )}
 
-              {/* Conflict-Free Timetable Generator with Teacher Break Rules */}
-              <button
-                onClick={handleAutoGenerateTimetable}
-                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md hover:opacity-95 print:hidden"
-                title="Generate timetable ensuring breaks between every 2 classes & zero teacher clashes"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                ⚡ Auto-Generate Timetable
+            {/* Subject list */}
+            {activeSemConfig && semesterSubjectGroups.length > 0 ? (
+              <div className="space-y-2">
+                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Configured Semester Subjects ({semesterSubjectGroups.length})</h3>
+                {semesterSubjectGroups.map(group => {
+                  const sub = group.subjects[0];
+                  const teacherAssignments = group.subjects.filter(subject => subject.teacher);
+                  const uniqueTeachers = [...new Map(teacherAssignments.map(subject => [
+                    subject.teacher._id || subject.teacher,
+                    subject.teacher
+                  ])).values()];
+                  return (
+                  <div key={group.code} className="flex items-center justify-between p-3 rounded-xl bg-[#040d1a] border border-[#133966]">
+                    <div className="flex items-center gap-3">
+                      <span className="px-2 py-0.5 rounded-lg bg-[#00a896]/20 text-[#00C49F] text-[10px] font-mono font-bold border border-[#00a896]/30">{group.code}</span>
+                      <div>
+                        <div className="text-xs font-bold text-white">{group.title}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {sub.semesterHours ? `${sub.semesterHours} hrs/semester` : `${sub.weeklyHours} hrs/week (legacy)`}
+                          {` · Division ${selectedSubjectDivision}`}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {uniqueTeachers.length > 0 && (
+                        <span className="flex items-center gap-1.5 text-[11px] text-[#00C49F]">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {uniqueTeachers[0].name}
+                        </span>
+                      )}
+                      {!activeSemConfig?.isLocked && (
+                        <select onChange={e => handleAssignSubjectTeacher(group.code, e.target.value)}
+                          value={sub.teacher?._id || sub.teacher || ''}
+                          className="bg-[#071b34] border border-amber-500/40 rounded-lg px-2 py-1 text-[10px] text-amber-300 focus:outline-none">
+                          <option value="">Unassigned</option>
+                          {getAvailableTeachers(selectedSubjectDivision, group.code).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                          {getAvailableTeachers(selectedSubjectDivision, group.code).length === 0 && <option disabled>No available teachers</option>}
+                        </select>
+                      )}
+                      <button onClick={() => handleRemoveSubject(group.code)}
+                        className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/20 transition-all">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  );
+                })}
+              </div>
+            ) : (
+              activeSemConfig && <div className="text-center py-4 text-slate-400 text-xs">No subjects yet. Add subjects above.</div>
+            )}
+          </div>
+
+          {/* Step 4: Select Divisions & Generate */}
+          <div className={`bg-[#071b34]/95 border rounded-3xl p-6 shadow-xl space-y-4 transition-all ${activeSemConfig && activeSemConfig.subjects.length > 0 ? 'border-[#133966]' : 'border-[#133966]/50 opacity-60 pointer-events-none'}`}>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-[#00C49F]" />
+              <h2 className="text-base font-bold text-white">Step 4 — Generate Timetable for the Division Group</h2>
+            </div>
+            <p className="text-xs text-slate-400">
+              Subjects are configured once per semester and shared by the divisions selected in Step 3. The generator spreads each subject's semester hours across Monday–Saturday in 1-hour classes, using up to 2 hours when needed.
+            </p>
+
+            {/* Summary before generate */}
+            <div className="p-4 rounded-2xl bg-[#040d1a] border border-[#133966] space-y-1 text-xs">
+              {hasBranchSem && <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Branch: <span className="text-white font-semibold">{selectedBranch}</span></div>}
+              {hasBranchSem && <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Semester: <span className="text-white font-semibold">{selectedSemester}</span></div>}
+              {isSchool && <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Standard: <span className="text-white font-semibold">{selectedStandard}</span></div>}
+              {isPUC && <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> PUC: <span className="text-white font-semibold">{selectedPucYear} — {selectedPucDept}</span></div>}
+              <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Divisions: <span className="text-white font-semibold">{selectedDivisions.join(', ') || 'None selected'}</span></div>
+              <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Subjects: <span className="text-white font-semibold">{semesterSubjectGroups.length} semester subjects added</span></div>
+              <div className="flex items-center gap-2 text-slate-300"><ChevronRight className="w-3.5 h-3.5 text-[#00C49F]" /> Date range: <span className="text-white font-semibold">{activeSemConfig ? `${new Date(activeSemConfig.startDate).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'})} → ${new Date(activeSemConfig.endDate).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'})}` : 'Not set'}</span></div>
+              {activeSemConfig?.isLocked && <div className="flex items-center gap-2 text-amber-300"><ChevronRight className="w-3.5 h-3.5 text-amber-400" /> Status: <span className="font-semibold">🔒 Locked — timetable generation allowed</span></div>}
+            </div>
+
+            <button onClick={handleAutoGenerateTimetable} disabled={generatingTimetable || selectedDivisions.length === 0}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg hover:opacity-95 disabled:opacity-50 transition-all">
+              {generatingTimetable ? (
+                <><div className="w-4 h-4 border-2 border-[#040d1a] border-t-transparent rounded-full animate-spin" /> Generating...</>
+              ) : (
+                <><Sparkles className="w-5 h-5" /> ⚡ Generate Timetable for Division(s) {selectedDivisions.join(', ')}</>
+              )}
+            </button>
+
+            <p className="text-[11px] text-slate-500 text-center">
+              After generation, view the result in the <strong className="text-slate-300">Timetable</strong> tab.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          PAGE: TIMETABLE VIEWER
+      ==================================================================== */}
+      {activePage === 'timetable' && (
+        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-6">
+
+          {/* Selectors — institution-aware */}
+          <div className="flex flex-wrap items-center gap-4">
+            {hasBranchSem && (
+              <>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Branch</label>
+                  <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                    className="bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896] max-w-xs">
+                    {ACTIVE_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Semester</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {ACTIVE_SEMESTERS.map(s => (
+                      <button key={s} onClick={() => setSelectedSemester(s)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedSemester === s ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400 hover:border-[#00C49F]'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            {isSchool && (
+              <div>
+                <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Standard</label>
+                <select value={selectedStandard} onChange={e => setSelectedStandard(e.target.value)}
+                  className="bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  {SCHOOL_STDS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+            {isPUC && (
+              <>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">PUC Year</label>
+                  <div className="flex gap-1.5">
+                    {PUC_YEARS.map(y => (
+                      <button key={y} onClick={() => setSelectedPucYear(y)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedPucYear === y ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400 hover:border-[#00C49F]'}`}>
+                        {y}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Department</label>
+                  <div className="flex gap-1.5">
+                    {PUC_DEPTS_LIST.map(d => (
+                      <button key={d} onClick={() => setSelectedPucDept(d)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedPucDept === d ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400 hover:border-[#00C49F]'}`}>
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Division switcher */}
+            <div>
+              <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Division</label>
+              <div className="flex bg-[#040d1a] p-1 rounded-xl border border-[#133966] gap-0.5">
+                {DIVISIONS.map(div => (
+                  <button key={div} onClick={() => { setSelectedTimetableDiv(div); loadTimetable(div); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedTimetableDiv === div ? 'bg-[#00C49F] text-[#040d1a]' : 'text-slate-400 hover:text-white'}`}>
+                    {div}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="ml-auto flex gap-2">
+              <button onClick={() => setShowTimetableModal(true)}
+                className="px-3 py-2 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1">
+                <Plus className="w-4 h-4" /> Add Slot
               </button>
-
-              <button
-                onClick={() => setShowTimetableModal(true)}
-                className="px-3 py-2 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1 print:hidden"
-              >
-                <Plus className="w-4 h-4" />
-                Add Slot
+              <button onClick={() => setActivePage('schedule-setup')}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> Auto-Generate
               </button>
             </div>
           </div>
 
-          {/* RENDER DEDICATED OFFICIAL TIMETABLE TABLE COMPONENT */}
+          {/* Timetable table */}
           {loadingTimetable ? (
             <div className="py-12 text-center text-xs text-slate-400">
               <div className="w-8 h-8 border-2 border-[#00C49F] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-              Loading {selectedSemester}th Semester Division {selectedTimetableDiv} Timetable...
+              Loading timetable...
+            </div>
+          ) : timetables.length === 0 ? (
+            <div className="py-16 text-center space-y-3 bg-[#040d1a] rounded-2xl border border-[#133966]">
+              <Calendar className="w-10 h-10 text-slate-600 mx-auto" />
+              <div className="text-sm font-bold text-slate-300">No timetable found</div>
+              <div className="text-xs text-slate-500 max-w-sm mx-auto">
+                No schedule exists for{hasBranchSem ? ` ${selectedBranch} — Semester ${selectedSemester}` : isSchool ? ` ${selectedStandard}` : ''}, Division {selectedTimetableDiv}.
+              </div>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button onClick={() => setActivePage('schedule-setup')}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> Go to Schedule Setup
+                </button>
+                <button onClick={() => loadTimetable(selectedTimetableDiv)}
+                  className="px-4 py-2 rounded-xl bg-[#0b2444] text-slate-300 text-xs font-bold border border-[#133966] flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5" /> Retry
+                </button>
+              </div>
             </div>
           ) : (
             <TimetableTable
@@ -692,867 +1352,635 @@ export default function AdminDashboard({ user }) {
               semester={selectedSemester}
               standard={selectedStandard}
               institutionType={institutionMode}
-              classroom={selectedTimetableDiv === 'C' ? 'Class Room: AS-11' : (selectedTimetableDiv === 'B' ? 'Lecture Hall LH-302' : 'Smart Hall LH-301')}
-              coordinator={selectedTimetableDiv === 'C' ? 'Prof. Nandini C.V' : 'Prof. Pavan K.K'}
+              classroom={selectedTimetableDiv === 'A' ? 'Smart Hall LH-301' : selectedTimetableDiv === 'B' ? 'LH-302' : 'Class Room: AS-11'}
+              coordinator={selectedTimetableDiv === 'A' ? 'Prof. Pavan K.K' : selectedTimetableDiv === 'B' ? 'Dr. A.A. Quazi' : 'Prof. Nandini C.V'}
               slots={timetables}
               courses={courses}
               teachers={teachersList}
               isAdmin={true}
+              semesterSubjects={(() => {
+                const subs = activeSemConfig?.subjects || [];
+                // Attach date metadata as non-enumerable-like properties on the array
+                const arr = [...subs];
+                arr.__startDate = activeSemConfig?.startDate;
+                arr.__endDate = activeSemConfig?.endDate;
+                arr.__academicYear = activeSemConfig?.academicYear;
+                return arr;
+              })()}
               onUpdateSlot={handleUpdateOrAddSlot}
               onAssignCourseTeacher={async (courseId, teacherId) => {
                 try {
                   const res = await api.assignTeacherToCourse(courseId, teacherId);
-                  setBanner(res.message || 'Teacher assigned successfully!');
+                  showBanner(res.message);
                   await loadCoursesAndTeachers();
-                  await loadTimetable(selectedTimetableDiv, selectedSemester);
-                } catch (err) {
-                  setBanner(err.message || 'Failed to assign teacher');
-                }
-              }}
-              onUpdateHeader={(h) => {
-                setAllocatedRoom(h.classroom);
-                setAllocatedCoordinator(h.coordinator);
-                setBanner(`Updated allocation: ${h.classroom} • Coordinator: ${h.coordinator}`);
+                  await loadTimetable(selectedTimetableDiv);
+                } catch (e) { showBanner(e.message, 'error'); }
               }}
             />
           )}
 
-        </div>
-      )}
-
-      {/* ========================================================
-          PAGE 3: DIVISION ALLOCATOR (SEMESTER CRITERIA, CLASS STRENGTH, ADD DIVISIONS)
-      ======================================================== */}
-      {activePage === 'divisions' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#133966]">
-            <div>
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-[#00C49F]" />
-                <h2 className="text-lg font-extrabold text-white">Student Division Allocations</h2>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Allocate students into divisions based on Semester criteria and specified class strength. Add custom divisions anytime.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Edit / Lock Mode */}
-              {!isEditingDivisions ? (
-                <button
-                  onClick={() => setIsEditingDivisions(true)}
-                  className="px-3.5 py-2 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1.5 shadow-sm"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  Manual Edit Divisions
-                </button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsEditingDivisions(false)}
-                    className="px-3 py-2 text-xs text-slate-400 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveManualDivisions}
-                    disabled={savingDivisions}
-                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-[#040d1a] font-black text-xs uppercase flex items-center gap-1 shadow-md"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    Save Changes
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* CRITERIA BAR 1: SEMESTER / STANDARD CRITERIA & CLASS STRENGTH */}
-          <div className="bg-[#040d1a] border border-[#133966] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-            
-            {/* Semester or Standard Filter Criteria */}
-            <div className="flex flex-wrap items-center gap-3">
-              {institutionMode === 'college' ? (
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold text-slate-300">Semester Criteria:</label>
-                  <select
-                    value={allocatorSemester}
-                    onChange={(e) => {
-                      const sem = Number(e.target.value);
-                      setAllocatorSemester(sem);
-                      loadStudentsForDivisions(sem, allocatorStandard);
-                    }}
-                    className="bg-[#071b34] border border-[#00a896]/50 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-                  >
-                    {[3, 4, 5, 6, 7, 8].map((s) => (
-                      <option key={s} value={s}>
-                        {s}th Semester {s === 5 ? '(Active - Div C)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-bold text-slate-300">Standard Criteria:</label>
-                  <select
-                    value={allocatorStandard}
-                    onChange={(e) => {
-                      setAllocatorStandard(e.target.value);
-                      loadStudentsForDivisions(allocatorSemester, e.target.value);
-                    }}
-                    className="bg-[#071b34] border border-[#00a896]/50 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-                  >
-                    {['1st Std', '2nd Std', '3rd Std', '4th Std', '5th Std', '6th Std', '7th Std', '8th Std', '9th Std', '10th Std', '11th Std (PUC-I)', '12th Std (PUC-II)'].map((std) => (
-                      <option key={std} value={std}>{std}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Class Strength Specified by Admin */}
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-slate-300">Class Strength / Div:</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="200"
-                  value={classStrength}
-                  onChange={(e) => setClassStrength(e.target.value)}
-                  className="w-20 bg-[#071b34] border border-[#00a896]/50 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono font-bold text-center focus:outline-none focus:border-[#00C49F]"
-                  title="Maximum students in each division before spilling into next division"
-                />
-                <span className="text-[11px] text-slate-400 font-mono">students/class</span>
-              </div>
-            </div>
-
-            {/* Run Auto-Division with Specified Strength */}
-            <button
-              onClick={handleAutoAllocateDivisions}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] hover:opacity-95 text-[#040d1a] font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md transition-all"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              ⚡ Auto-Divide Students ({classStrength}/class)
-            </button>
-          </div>
-
-          {/* CRITERIA BAR 2: ACTIVE DIVISIONS & ADD ANOTHER DIVISION */}
-          <div className="bg-[#040d1a] border border-[#133966] rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4">
-            
-            {/* Add Another Division Form */}
-            <form onSubmit={handleAddDivision} className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-300">Add Division:</label>
-              <input
-                type="text"
-                placeholder="e.g. D"
-                value={newDivName}
-                maxLength={4}
-                onChange={(e) => setNewDivName(e.target.value)}
-                className="w-20 bg-[#071b34] border border-[#133966] rounded-xl px-2.5 py-1.5 text-xs text-white uppercase font-bold text-center focus:outline-none focus:border-[#00C49F]"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1.5 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/40 text-xs font-bold flex items-center gap-1 transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Division
-              </button>
-            </form>
-
-            {/* Division Filter for Student List */}
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-300">Filter View:</label>
-              <select
-                value={divisionFilter}
-                onChange={(e) => setDivisionFilter(e.target.value)}
-                className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none"
-              >
-                <option value="ALL">All Divisions ({studentsList.length} students)</option>
-                {availableDivisions.map(div => (
-                  <option key={div} value={div}>Division {div} Only</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Division Allocation Breakdown Stats Pill */}
-          <div className="p-3.5 rounded-2xl bg-[#040d1a] border border-[#133966] flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-300 font-medium">
-              {isEditingDivisions ? (
-                <Unlock className="w-4 h-4 text-amber-400" />
-              ) : (
-                <Lock className="w-4 h-4 text-[#00C49F]" />
-              )}
-              <span>
-                Criteria: <strong className="text-white">
-                  {institutionMode === 'college' ? `${allocatorSemester}th Semester` : allocatorStandard}
-                </strong> • Status: <strong className={isEditingDivisions ? 'text-amber-400' : 'text-[#00C49F]'}>
-                  {isEditingDivisions ? 'Unlocked (Manual Override Active)' : 'Allocated & Enrolled'}
-                </strong>
-              </span>
-            </div>
-            
-            {/* Live Count for Each Division */}
-            <div className="flex flex-wrap items-center gap-2 font-mono text-cyan-200">
-              {availableDivisions.map(div => {
-                const count = studentsList.filter(s => (divisionChanges[s._id] || s.division) === div).length;
-                return (
-                  <span key={div} className="px-2 py-0.5 rounded-lg bg-[#071b34] border border-[#133966]">
-                    Div {div}: <strong className="text-[#00C49F]">{count}</strong>
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Students List Table */}
-          <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
-                <tr>
-                  <th className="py-3 px-4">Student Face & Name</th>
-                  <th className="py-3 px-4">USN / Roll No</th>
-                  <th className="py-3 px-4">Class Criteria</th>
-                  <th className="py-3 px-4 text-center">Assigned Division</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#133966]/60 font-medium">
-                {studentsList.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-8 text-center text-slate-400">
-                      No students found for {institutionMode === 'college' ? `Semester ${allocatorSemester}` : allocatorStandard}.
-                    </td>
-                  </tr>
-                ) : (
-                  studentsList
-                    .filter(s => divisionFilter === 'ALL' || (divisionChanges[s._id] || s.division) === divisionFilter)
-                    .map((student) => {
-                      const currentDiv = divisionChanges[student._id] || student.division || 'A';
-                      return (
-                        <tr key={student._id} className="hover:bg-[#0b2444]/40 transition-colors">
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full overflow-hidden border border-[#00a896] bg-[#040d1a] shrink-0">
-                                <img src={student.profileImage || '/logo.jpg'} alt={student.name} className="w-full h-full object-cover" />
-                              </div>
-                              <div>
-                                <div className="font-bold text-white">{student.name}</div>
-                                <div className="text-[10px] text-slate-400 font-mono">{student.email}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 font-mono font-bold text-[#67e8f9]">
-                            {student.usn}
-                          </td>
-                          <td className="py-3 px-4 text-slate-300">
-                            {student.institutionType === 'school' ? (student.standard || '10th Std') : `${student.department} (Sem ${student.semester})`}
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            {isEditingDivisions ? (
-                              <select
-                                value={currentDiv}
-                                onChange={(e) => setDivisionChanges({
-                                  ...divisionChanges,
-                                  [student._id]: e.target.value
-                                })}
-                                className="bg-[#040d1a] border border-[#00C49F] rounded-lg px-3 py-1 font-bold text-white text-xs focus:outline-none"
-                              >
-                                {availableDivisions.map(div => (
-                                  <option key={div} value={div}>Division {div}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span className={`inline-block px-3 py-1 rounded-full text-xs font-black font-mono ${
-                                currentDiv === 'C'
-                                  ? 'bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40'
-                                  : (currentDiv === 'B' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40')
-                              }`}>
-                                Division {currentDiv}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================
-          PAGE 4: TEACHERS & COURSE ASSIGNMENTS
-      ======================================================== */}
-      {activePage === 'teachers' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#133966]">
-            <div>
-              <div className="flex items-center gap-2">
-                <School className="w-5 h-5 text-[#00C49F]" />
-                <h2 className="text-lg font-extrabold text-white">Course Faculty Assignments</h2>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Assign teachers to academic subjects and manage curriculum classes.
-              </p>
-            </div>
-
-            <button
-              onClick={() => setShowCourseModal(true)}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md"
-            >
-              <Plus className="w-4 h-4" />
-              Add Course
-            </button>
-          </div>
-
-          <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-            <table className="w-full text-left text-xs text-slate-300">
-              <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
-                <tr>
-                  <th className="py-3 px-4">Course Code</th>
-                  <th className="py-3 px-4">Subject Title</th>
-                  <th className="py-3 px-4">Semester & Div</th>
-                  <th className="py-3 px-4">Assigned Faculty Lecturer</th>
-                  <th className="py-3 px-4 text-center">Classes Held</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#133966]/60 font-medium">
-                {courses.map((c) => (
-                  <tr key={c._id} className="hover:bg-[#0b2444]/40 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-[#67e8f9]">
-                      {c.code}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-white text-sm">
-                      {c.title}
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-cyan-200">
-                      Sem {c.semester} • Div {c.section}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {/* Interactive Teacher Assignment Dropdown */}
-                      <select
-                        value={c.teacher?._id || ''}
-                        onChange={(e) => handleAssignTeacher(c._id, e.target.value)}
-                        className="bg-[#040d1a] border border-[#133966] focus:border-[#00C49F] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
-                      >
-                        <option value="">Select Lecturer...</option>
-                        {teachersList.map((t) => (
-                          <option key={t._id} value={t._id}>
-                            {t.name} ({t.teacherId})
-                          </option>
-                        ))}
+          {/* Manual Add Slot Modal */}
+          {showTimetableModal && (
+            <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+              <div className="bg-[#071b34] border border-[#133966] rounded-3xl p-6 w-full max-w-md shadow-2xl">
+                <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><Plus className="w-4 h-4 text-[#00C49F]" /> Add Timetable Slot</h3>
+                <form onSubmit={handleCreateTimetableSlot} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-300 mb-1 block">Day</label>
+                      <select value={ttDay} onChange={e => setTtDay(e.target.value)}
+                        className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                        {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => <option key={d}>{d}</option>)}
                       </select>
-                    </td>
-                    <td className="py-3.5 px-4 text-center font-mono font-bold text-[#00C49F]">
-                      {c.totalClassesHeld || 0}
-                    </td>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-300 mb-1 block">Time Slot</label>
+                      <select value={ttSlot} onChange={e => setTtSlot(e.target.value)}
+                        className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                        {TIME_SLOTS.map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 mb-1 block">Subject</label>
+                    <select value={ttCourseId} onChange={e => setTtCourseId(e.target.value)}
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                      {timetableCourses.map(c => <option key={c._id} value={c._id}>{c.code} — {c.title}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 mb-1 block">Teacher</label>
+                    <select value={ttTeacherId} onChange={e => setTtTeacherId(e.target.value)}
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                      {getAvailableTeachers(selectedTimetableDiv, courses.find(course => course._id === ttCourseId)?.code).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                      {getAvailableTeachers(selectedTimetableDiv, courses.find(course => course._id === ttCourseId)?.code).length === 0 && <option disabled>No available teachers</option>}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 mb-1 block">Classroom</label>
+                    <input type="text" value={ttClassroom} onChange={e => setTtClassroom(e.target.value)}
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none" />
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button type="submit" className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black">Add Slot</button>
+                    <button type="button" onClick={() => setShowTimetableModal(false)} className="flex-1 py-2.5 rounded-xl bg-[#0b2444] text-slate-300 text-xs font-bold border border-[#133966]">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ====================================================================
+          PAGE: DIVISION ALLOCATOR
+      ==================================================================== */}
+      {activePage === 'divisions' && (
+        <div className="space-y-6">
+          <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+            <h2 className="text-base font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-[#00C49F]" /> Student Division Allocator</h2>
+
+            {/* Controls */}
+            <div className="flex flex-wrap items-center gap-4 p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
+              {/* Branch (institute/diploma) */}
+              {hasBranchSem && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-300 shrink-0">Branch:</label>
+                  <select value={allocatorBranch} onChange={e => setAllocatorBranch(e.target.value)}
+                    className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896] max-w-[200px]">
+                    {ACTIVE_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+              )}
+              {/* Semester (institute/diploma) */}
+              {hasBranchSem && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-300">Semester:</label>
+                  <div className="flex gap-1 flex-wrap">
+                    {ACTIVE_SEMESTERS.map(s => (
+                      <button key={s} onClick={() => setAllocatorSemester(s)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${allocatorSemester === s ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400'}`}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Standard (school) */}
+              {isSchool && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-300">Standard:</label>
+                  <select value={allocatorStandard} onChange={e => setAllocatorStandard(e.target.value)}
+                    className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                    {SCHOOL_STDS.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+              )}
+              {/* PUC Year */}
+              {isPUC && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-300">PUC Year:</label>
+                  {PUC_YEARS.map(y => (
+                    <button key={y} onClick={() => setSelectedPucYear(y)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${selectedPucYear === y ? 'bg-[#00C49F] text-[#040d1a]' : 'border-[#133966] text-slate-400'}`}>
+                      {y}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {isPUC && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-300">Department:</label>
+                  {PUC_DEPTS_LIST.map(dept => (
+                    <button key={dept} onClick={() => setSelectedPucDept(dept)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${selectedPucDept === dept ? 'bg-[#00C49F] text-[#040d1a]' : 'border-[#133966] text-slate-400'}`}>
+                      {dept}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-semibold text-slate-300">Divisions:</label>
+                <div className="flex gap-1">
+                  {DIVISIONS.map(d => (
+                    <button key={d} onClick={() => setAvailableDivisions(prev =>
+                      prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort()
+                    )}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${availableDivisions.includes(d) ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400'}`}>
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="ml-auto flex gap-2">
+                <button onClick={handleAutoAllocateDivisions}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> Auto Allocate
+                </button>
+                <button onClick={() => setIsEditingDivisions(v => !v)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${isEditingDivisions ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-[#0b2444] text-slate-300 border-[#133966]'}`}>
+                  {isEditingDivisions ? 'Cancel Edit' : 'Manual Edit'}
+                </button>
+              </div>
+            </div>
+
+            {/* Division filter tabs */}
+            <div className="flex gap-2 flex-wrap">
+              {['ALL', ...availableDivisions].map(d => (
+                <button key={d} onClick={() => setDivisionFilter(d)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${divisionFilter === d ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400 hover:text-white'}`}>
+                  {d === 'ALL' ? `All (${studentsList.length})` : `Div ${d} (${studentsList.filter(s => (s.division || 'A') === d).length})`}
+                </button>
+              ))}
+            </div>
+
+            {/* Students table */}
+            <div className="overflow-auto max-h-96 rounded-2xl border border-[#133966]">
+              <table className="w-full text-xs">
+                <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider sticky top-0">
+                  <tr>
+                    <th className="text-left p-3 font-bold">USN</th>
+                    <th className="text-left p-3 font-bold">Name</th>
+                    {hasBranchSem && <th className="text-left p-3 font-bold">Branch</th>}
+                    {hasBranchSem && <th className="text-left p-3 font-bold">Sem</th>}
+                    {isSchool && <th className="text-left p-3 font-bold">Standard</th>}
+                    <th className="text-left p-3 font-bold">Division</th>
+                    {isEditingDivisions && <th className="text-left p-3 font-bold">Change To</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredStudents.map(s => (
+                    <tr key={s._id} className="border-t border-[#133966] hover:bg-[#0b2444]/30">
+                      <td className="p-3 font-mono text-cyan-300">{s.usn || '—'}</td>
+                      <td className="p-3 text-white font-medium">{s.name}</td>
+                      {hasBranchSem && <td className="p-3 text-slate-400 text-[10px] max-w-[100px] truncate" title={s.branch}>{s.branch?.split(' ').slice(0,2).join(' ') || '—'}</td>}
+                      {hasBranchSem && <td className="p-3 text-slate-300">{s.semester || '—'}</td>}
+                      {isSchool && <td className="p-3 text-slate-300">{s.standard || '—'}</td>}
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] text-[10px] font-bold border border-[#00a896]/30">
+                          Div {divisionChanges[s._id] || s.division || 'A'}
+                        </span>
+                      </td>
+                      {isEditingDivisions && (
+                        <td className="p-3">
+                          <select value={divisionChanges[s._id] || 'A'}
+                            onChange={e => setDivisionChanges(prev => ({ ...prev, [s._id]: e.target.value }))}
+                            className="bg-[#071b34] border border-[#133966] rounded-lg px-2 py-1 text-xs text-white focus:outline-none">
+                            {availableDivisions.map(d => <option key={d} value={d}>Div {d}</option>)}
+                          </select>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                  {filteredStudents.length === 0 && (
+                    <tr><td colSpan={8} className="p-8 text-center text-slate-400">No students found. Select branch/semester above.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {isEditingDivisions && (
+              <button onClick={handleSaveManualDivisions} disabled={savingDivisions}
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50">
+                {savingDivisions ? 'Saving...' : `Save Division Changes (${Object.keys(divisionChanges).length} students)`}
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* ========================================================
-          PAGE 5: USERS & BIOMETRICS DIRECTORY
-      ======================================================== */}
-      {activePage === 'users' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#133966]">
-            <div>
-              <div className="flex items-center gap-2">
-                <GraduationCap className="w-5 h-5 text-[#00C49F]" />
-                <h2 className="text-lg font-extrabold text-white">Academic Directory & Biometrics</h2>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Inspect registered Admins, Teachers, and 60 Students with real face portraits & identifiers.
-              </p>
+      {/* ====================================================================
+      {/* ====================================================================
+          PAGE: FACULTY TRACKER (replaces old Teachers & Courses assign page)
+      ==================================================================== */}
+      {activePage === 'faculty-tracker' && <FacultyTrackerPage api={api} teachersList={teachersList} />}
+
+      {/* ====================================================================
+          PAGE: COURSES MANAGEMENT
+      ==================================================================== */}
+      {activePage === 'courses' && (
+        <div className="space-y-6">
+          <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-white flex items-center gap-2"><BookOpen className="w-5 h-5 text-[#00C49F]" /> Course & Subject Management</h2>
+              <button onClick={() => setShowCourseModal(true)}
+                className="px-3 py-2 rounded-xl bg-[#0b2444] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1.5 hover:bg-[#133966]">
+                <Plus className="w-4 h-4" /> Add Course
+              </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              {['', 'admin', 'teacher', 'student'].map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setRoleFilter(r)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all uppercase ${
-                    roleFilter === r
-                      ? 'bg-[#00a896] text-[#040d1a] shadow-sm'
-                      : 'text-slate-400 hover:text-white bg-[#040d1a] border border-[#133966]'
-                  }`}
-                >
-                  {r || 'All Actors'}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span><strong>Constraint:</strong> Each teacher can only be assigned to ONE subject per semester, department, and division.</span>
+            </div>
+
+            {/* Branch & semester filter */}
+            <div className="flex flex-wrap gap-3 items-center">
+              <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                className="bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                {ACTIVE_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              <select value={selectedCourseDivision} onChange={e => setSelectedCourseDivision(e.target.value)}
+                className="bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                {DIVISIONS.map(div => <option key={div} value={div}>Division {div}</option>)}
+              </select>
+              <div className="flex gap-1.5 flex-wrap">
+                {ACTIVE_SEMESTERS.map(s => (
+                  <button key={s} onClick={() => setSelectedSemester(s)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${selectedSemester === s ? 'bg-[#00C49F] text-[#040d1a]' : 'border-[#133966] text-slate-400'}`}>
+                    Sem {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-auto rounded-2xl border border-[#133966]">
+              <table className="w-full text-xs">
+                <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider">
+                  <tr>
+                    <th className="text-left p-3 font-bold">Code</th>
+                    <th className="text-left p-3 font-bold">Subject</th>
+                    <th className="text-left p-3 font-bold">Sem</th>
+                    <th className="text-left p-3 font-bold">Assigned Teacher</th>
+                    <th className="text-left p-3 font-bold">Change Teacher</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {courseGroups.map(group => {
+                    const c = group.courses[0];
+                    const assignedTeachers = [...new Map(group.courses
+                      .filter(course => course.teacher)
+                      .map(course => [course.teacher._id || course.teacher, course.teacher])).values()];
+                    return (
+                    <tr key={`${c._id}-${group.code}`} className="border-t border-[#133966] hover:bg-[#0b2444]/30">
+                      <td className="p-3 font-mono text-cyan-300">{group.code}</td>
+                      <td className="p-3 text-white font-medium">
+                        {group.title}
+                        <span className="ml-2 text-[10px] text-slate-400">Division {selectedCourseDivision}</span>
+                      </td>
+                      <td className="p-3 text-slate-300">Sem {c.semester}</td>
+                      <td className="p-3">
+                        {assignedTeachers.length === 1
+                          ? <span className="flex items-center gap-1.5 text-[#00C49F]"><CheckCircle2 className="w-3.5 h-3.5" />{assignedTeachers[0].name}</span>
+                          : assignedTeachers.length > 1
+                            ? <span className="text-amber-300">Different by division</span>
+                          : <span className="text-amber-300 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" />Unassigned</span>}
+                      </td>
+                      <td className="p-3">
+                        <select defaultValue="" onChange={e => handleAssignTeacher(c._id, e.target.value)}
+                          className="bg-[#071b34] border border-[#133966] rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                          <option value="">— Assign —</option>
+                          {getAvailableTeachers(selectedCourseDivision, group.code).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                          {getAvailableTeachers(selectedCourseDivision, group.code).length === 0 && <option disabled>No available teachers</option>}
+                        </select>
+                      </td>
+                    </tr>
+                    );
+                  })}
+                  {courseGroups.length === 0 && (
+                    <tr><td colSpan={5} className="p-8 text-center text-slate-400">No courses found for selected branch/semester.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Add Course Modal */}
+          {showCourseModal && (
+            <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+              <div className="bg-[#071b34] border border-[#133966] rounded-3xl p-6 w-full max-w-md shadow-2xl">
+                <h3 className="text-sm font-bold text-white mb-4">Add New Course</h3>
+                <form onSubmit={async e => {
+                  e.preventDefault();
+                  try {
+                    await api.createCourse({ code: newCourseCode, title: newCourseTitle, branch: selectedBranch, department: selectedBranch, semester: newCourseSem, section: selectedCourseDivision, teacherId: assignedTeacherId || null });
+                    showBanner('Course created successfully.');
+                    setShowCourseModal(false);
+                    setNewCourseCode(''); setNewCourseTitle(''); setNewCourseSem(5); setAssignedTeacherId('');
+                    loadCoursesAndTeachers();
+                  } catch (e) { showBanner(e.message, 'error'); }
+                }} className="space-y-3">
+                  <div><label className="text-xs font-semibold text-slate-300 mb-1 block">Course Code *</label>
+                    <input required value={newCourseCode} onChange={e => setNewCourseCode(e.target.value)} placeholder="e.g. CS501"
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none" /></div>
+                  <div><label className="text-xs font-semibold text-slate-300 mb-1 block">Course Title *</label>
+                    <input required value={newCourseTitle} onChange={e => setNewCourseTitle(e.target.value)} placeholder="e.g. Data Structures"
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none" /></div>
+                  <div><label className="text-xs font-semibold text-slate-300 mb-1 block">Semester</label>
+                    <select value={newCourseSem} onChange={e => setNewCourseSem(Number(e.target.value))}
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                      {ACTIVE_SEMESTERS.map(s => <option key={s} value={s}>Semester {s}</option>)}
+                    </select></div>
+                  <div><label className="text-xs font-semibold text-slate-300 mb-1 block">Assign Teacher (Optional)</label>
+                    <select value={assignedTeacherId} onChange={e => setAssignedTeacherId(e.target.value)}
+                      className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                      <option value="">— None —</option>
+                      {getAvailableTeachers(selectedCourseDivision, newCourseCode).map(t => <option key={t._id} value={t._id}>{t.name}</option>)}
+                      {getAvailableTeachers(selectedCourseDivision, newCourseCode).length === 0 && <option disabled>No available teachers</option>}
+                    </select></div>
+                  <div className="flex gap-2 pt-2">
+                    <button type="submit" className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black">Create Course</button>
+                    <button type="button" onClick={() => setShowCourseModal(false)} className="flex-1 py-2.5 rounded-xl bg-[#0b2444] text-slate-300 text-xs font-bold border border-[#133966]">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ====================================================================
+          PAGE: STUDENTS & BIOMETRICS — with Branch→Sem→Div hierarchy + search
+      ==================================================================== */}
+      {activePage === 'users' && (
+        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <GraduationCap className="w-5 h-5 text-[#00C49F]" /> Users & Biometrics
+            </h2>
+            <div className="flex gap-2 flex-wrap">
+              {['student', 'teacher'].map(r => (
+                <button key={r} onClick={() => { setRoleFilter(r); setUsersPage(1); }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all capitalize ${roleFilter === r ? 'bg-[#00C49F] text-[#040d1a] border-[#00C49F]' : 'border-[#133966] text-slate-400 hover:text-white'}`}>
+                  {r}
                 </button>
               ))}
             </div>
           </div>
 
+          {/* Hierarchy filters — shown only for students */}
+          {(roleFilter === 'student' || roleFilter === 'teacher') && (
+            <div className="p-3 rounded-2xl bg-[#040d1a] border border-[#133966] flex flex-wrap gap-3 items-center">
+              {/* Department / branch */}
+              {hasBranchSem && (
+                <select value={usersBranch} onChange={e => { setUsersBranch(e.target.value); setUsersPage(1); }}
+                  className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">All Departments</option>
+                  {ACTIVE_BRANCHES.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              )}
+              {/* Semester (institute/diploma) */}
+              {hasBranchSem && roleFilter === 'student' && (
+                <select value={usersSemester} onChange={e => { setUsersSemester(e.target.value); setUsersPage(1); }}
+                  className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">All Semesters</option>
+                  {ACTIVE_SEMESTERS.map(s => <option key={s} value={s}>Semester {s}</option>)}
+                </select>
+              )}
+              {/* Standard (school) */}
+              {isSchool && roleFilter === 'student' && (
+                <select value={usersStandard} onChange={e => { setUsersStandard(e.target.value); setUsersPage(1); }}
+                  className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">All Standards</option>
+                  {SCHOOL_STDS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              {isPUC && roleFilter === 'student' && (
+                <select value={usersPucYear} onChange={e => { setUsersPucYear(e.target.value); setUsersPage(1); }}
+                  className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">All PUC Years</option>
+                  {['1st PUC', '2nd PUC'].map(year => <option key={year} value={year}>{year}</option>)}
+                </select>
+              )}
+              {isPUC && (
+                <select value={usersPucDept} onChange={e => { setUsersPucDept(e.target.value); setUsersPage(1); }}
+                  className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                  <option value="">All Departments</option>
+                  {PUC_DEPTS_LIST.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                </select>
+              )}
+              {/* Division */}
+              {roleFilter === 'student' && <select value={usersDivision} onChange={e => { setUsersDivision(e.target.value); setUsersPage(1); }}
+                className="bg-[#071b34] border border-[#133966] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
+                <option value="">All Divisions</option>
+                {DIVISIONS.map(d => <option key={d} value={d}>Division {d}</option>)}
+              </select>}
+              {/* Clear filters */}
+              {(usersBranch || usersSemester || usersDivision || usersStandard || usersPucYear || usersPucDept) && (
+                <button onClick={() => {
+                  setUsersBranch(''); setUsersSemester(''); setUsersDivision(''); setUsersStandard('');
+                  setUsersPucYear(''); setUsersPucDept(''); setUsersPage(1);
+                }}
+                  className="text-[11px] text-[#00C49F] hover:underline">Clear filters</button>
+              )}
+            </div>
+          )}
+
+          {/* Search box */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder={`Search ${roleFilter || 'users'} by name, USN / ID...`}
+              value={userSearch}
+              onChange={e => { setUserSearch(e.target.value); setUsersPage(1); }}
+              className="w-full bg-[#040d1a] border border-[#133966] rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[#00a896]"
+            />
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {userSearch && (
+              <button onClick={() => setUserSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs">✕</button>
+            )}
+          </div>
+
+          {/* Results count */}
+          {!loadingUsers && (
+            <div className="text-[11px] text-slate-400">
+              Showing <strong className="text-white">{users.length}</strong> of {usersPagination.total} {roleFilter || 'users'}
+            </div>
+          )}
+
           {loadingUsers ? (
-            <div className="py-12 text-center text-xs text-slate-400">Loading directory...</div>
+            <div className="py-8 text-center text-slate-400 text-xs">Loading users...</div>
           ) : (
-            <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-              <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
+            <div className="overflow-auto rounded-2xl border border-[#133966] max-h-[600px]">
+              <table className="w-full text-xs">
+                <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider sticky top-0">
                   <tr>
-                    <th className="py-3 px-4">Student Face & Profile</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Assigned Identifier</th>
-                    <th className="py-3 px-4">Division / Semester</th>
-                    <th className="py-3 px-4">Biometrics</th>
-                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="text-left p-3">Name</th>
+                    <th className="text-left p-3">ID / USN</th>
+                    {hasBranchSem && <th className="text-left p-3">Department</th>}
+                    {hasBranchSem && roleFilter === 'student' && <th className="text-left p-3">Sem</th>}
+                    {isPUC && <th className="text-left p-3">Department</th>}
+                    {isPUC && roleFilter === 'student' && <th className="text-left p-3">PUC Year</th>}
+                    {isSchool && roleFilter === 'student' && <th className="text-left p-3">Standard</th>}
+                    <th className="text-left p-3">Div</th>
+                    {roleFilter === 'student' && <th className="text-left p-3">Face</th>}
+                    <th className="text-left p-3">Status</th>
+                    <th className="text-left p-3">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#133966]/60 font-medium">
-                  {users.map((u) => {
-                    const idVal = u.adminId || u.teacherId || u.usn;
-                    const idLabel = u.role === 'admin' ? 'Admin ID' : u.role === 'teacher' ? 'Teacher ID' : 'USN';
-                    
-                    return (
-                      <tr key={u._id} className="hover:bg-[#0b2444]/40 transition-colors">
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full overflow-hidden border border-[#00a896] bg-[#040d1a] shrink-0">
-                              <img src={u.profileImage || '/logo.jpg'} alt={u.name} className="w-full h-full object-cover" />
-                            </div>
-                            <div>
-                              <div className="font-bold text-white">{u.name}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
-                            </div>
-                          </div>
+                <tbody>
+                  {users.map(u => (
+                      <tr key={u._id} className="border-t border-[#133966] hover:bg-[#0b2444]/30">
+                        <td className="p-3 text-white font-medium">{u.name}</td>
+                        <td className="p-3 font-mono text-cyan-300 text-[10px]">{u.usn || u.teacherId || u.adminId || '—'}</td>
+                        {hasBranchSem && (
+                          <td className="p-3 text-slate-400 text-[10px] max-w-[120px] truncate" title={u.branch || u.department}>{u.branch || u.department || '—'}</td>
+                        )}
+                        {hasBranchSem && roleFilter === 'student' && (
+                          <td className="p-3 text-slate-300">{u.semester || '—'}</td>
+                        )}
+                        {isPUC && <td className="p-3 text-slate-300">{u.pucDept || u.department || '—'}</td>}
+                        {isPUC && roleFilter === 'student' && <td className="p-3 text-slate-300">{u.pucYear || '—'}</td>}
+                        {isSchool && roleFilter === 'student' && <td className="p-3 text-slate-300">{u.standard || '—'}</td>}
+                        <td className="p-3">
+                          {u.division ? (
+                            <span className="px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] text-[10px] font-bold border border-[#00a896]/30">
+                              {u.division}
+                            </span>
+                          ) : <span className="text-slate-500">—</span>}
                         </td>
-                        <td className="py-3.5 px-4">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            u.role === 'admin'
-                              ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
-                              : u.role === 'teacher'
-                              ? 'bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40'
-                              : 'bg-cyan-500/10 text-[#38bdf8] border border-cyan-500/30'
-                          }`}>
-                            {u.role}
+                        {roleFilter === 'student' && (
+                          <td className="p-3">
+                            {u.faceRegistered
+                              ? <span className="text-[#00C49F] flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />Yes</span>
+                              : <span className="text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />No</span>}
+                          </td>
+                        )}
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${u.isActive ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-red-500/20 text-red-300 border-red-500/30'}`}>
+                            {u.isActive ? 'Active' : 'Inactive'}
                           </span>
                         </td>
-                        <td className="py-3.5 px-4 font-mono">
-                          <span className="text-slate-400 text-[10px] mr-1">{idLabel}:</span>
-                          <strong className="text-[#67e8f9]">{idVal || 'N/A'}</strong>
-                        </td>
-                        <td className="py-3.5 px-4 text-slate-300">
-                          {u.role === 'student' ? (
-                            <div className="font-mono text-cyan-200">
-                              Div {u.division || u.section || 'A'} • Sem {u.semester}
-                            </div>
-                          ) : (
-                            <div>{u.department}</div>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {u.role !== 'student' ? (
-                            <span className="text-slate-500 text-[11px] font-mono">Not Required (Students Only)</span>
-                          ) : u.faceRegistered ? (
-                            <span className="text-[#00C49F] font-semibold text-[11px] flex items-center gap-1 font-mono">
-                              <span className="w-2 h-2 rounded-full bg-[#00C49F]" />
-                              Active ({u.lastConfidenceScore || 95}%)
-                            </span>
-                          ) : (
-                            <span className="text-amber-400 text-[11px] font-mono">Pending</span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <button
-                            onClick={() => handleToggleStatus(u._id)}
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                              u.isActive
-                                ? 'bg-emerald-500/10 text-[#00C49F] hover:bg-rose-500/10 hover:text-rose-400 border border-emerald-500/30'
-                                : 'bg-rose-500/10 text-rose-400 hover:bg-emerald-500/10 hover:text-emerald-400 border border-rose-500/30'
-                            }`}
-                          >
-                            {u.isActive ? 'Active' : 'Inactive'}
+                        <td className="p-3">
+                          <button onClick={() => handleToggleStatus(u._id)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-all ${u.isActive ? 'text-red-300 border-red-500/30 hover:bg-red-500/20' : 'text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'}`}>
+                            {u.isActive ? 'Deactivate' : 'Activate'}
                           </button>
                         </td>
                       </tr>
-                    );
-                  })}
+                    ))}
+                  {users.length === 0 && (
+                    <tr><td colSpan={9} className="p-8 text-center text-slate-400">
+                      {userSearch ? `No ${roleFilter || 'users'} found matching "${userSearch}"` : `No ${roleFilter || 'users'} found.`}
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
+            </div>
+          )}
+          {!loadingUsers && usersPagination.totalPages > 1 && (
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>Page {usersPage} of {usersPagination.totalPages}</span>
+              <div className="flex gap-2">
+                <button disabled={usersPage <= 1} onClick={() => setUsersPage(page => Math.max(1, page - 1))}
+                  className="px-3 py-1.5 rounded-lg border border-[#133966] disabled:opacity-40">Previous</button>
+                <button disabled={usersPage >= usersPagination.totalPages} onClick={() => setUsersPage(page => Math.min(usersPagination.totalPages, page + 1))}
+                  className="px-3 py-1.5 rounded-lg border border-[#133966] disabled:opacity-40">Next</button>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* ========================================================
-          PAGE 6: ATTENDANCE AUDIT LOGS (TEACHER ATTENDANCE & CLASS PHOTOS)
-      ======================================================== */}
+      {/* ====================================================================
+          PAGE: ATTENDANCE AUDIT
+      ==================================================================== */}
       {activePage === 'attendance' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#133966]">
-            <div>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-rose-400" />
-                <h2 className="text-lg font-extrabold text-white">Daily Attendance & Faculty Audit Logs</h2>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Inspect classroom attendance photos, verify teacher presence selfies, and download finalized PDF/Excel/CSV reports.
-              </p>
-            </div>
-            <button
-              onClick={loadStats}
-              className="p-2 px-3 rounded-xl bg-[#0b2444] text-cyan-200 text-xs font-bold border border-[#133966] flex items-center gap-1.5 self-start sm:self-auto hover:bg-[#133966] transition-all"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Refresh Audits
-            </button>
-          </div>
-
+        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-4">
+          <h2 className="text-base font-bold text-white flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-[#00C49F]" /> Attendance Audit</h2>
           {stats?.recentSessions?.length > 0 ? (
-            <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-              <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
-                  <tr>
-                    <th className="py-3 px-4">Date & Slot</th>
-                    <th className="py-3 px-4">Subject</th>
-                    <th className="py-3 px-4">Lecturer & Presence Photo</th>
-                    <th className="py-3 px-4 text-center">Classroom 60 Photo</th>
-                    <th className="py-3 px-4">Hall / Room</th>
-                    <th className="py-3 px-4 text-center">Student Attendance</th>
-                    <th className="py-3 px-4 text-center">Export Reports</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#133966]/60 font-medium">
-                  {stats.recentSessions.map((s) => (
-                    <tr key={s._id} className="hover:bg-[#0b2444]/40 transition-colors">
-                      
-                      {/* Date & Slot */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-mono text-white font-bold">
-                          {new Date(s.sessionDate).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          {s.timeSlot || '08:30 AM - 09:25 AM'}
-                        </div>
-                      </td>
-
-                      {/* Course */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-white text-sm">{s.course?.code}</div>
-                        <div className="text-[10px] text-slate-300 line-clamp-1">{s.course?.title}</div>
-                      </td>
-
-                      {/* Teacher Verification Photo (Monitored for Teacher Attendance) */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setPreviewAuditModal({
-                              url: s.teacherPhoto || s.teacher?.profileImage || '/logo.jpg',
-                              title: `Faculty Attendance Verification: ${s.teacher?.name || 'Faculty Member'}`,
-                              subtitle: `Captured during session at ${s.classroom} • Attendance Verified Present`
-                            })}
-                            className="relative group w-11 h-11 rounded-xl overflow-hidden border-2 border-[#00C49F] bg-[#040d1a] shadow-md shrink-0"
-                            title="Click to view teacher selfie"
-                          >
-                            <img
-                              src={s.teacherPhoto || s.teacher?.profileImage || '/logo.jpg'}
-                              alt={s.teacher?.name || 'Faculty'}
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                              onError={(e) => { e.target.src = '/logo.jpg'; }}
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                              <Eye className="w-3.5 h-3.5 text-white" />
-                            </div>
-                          </button>
-                          <div>
-                            <div className="font-bold text-white flex items-center gap-1.5">
-                              <span>{s.teacher?.name}</span>
-                            </div>
-                            <span className="inline-flex items-center gap-1 text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-[#00C49F] border border-emerald-500/30 mt-0.5">
-                              <UserCheck className="w-3 h-3 text-[#00C49F]" />
-                              Teacher Present in Class
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Classroom Photo */}
-                      <td className="py-3.5 px-4 text-center">
-                        {s.classPhoto ? (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewAuditModal({
-                              url: s.classPhoto,
-                              title: `Classroom Seated Photo: ${s.course?.code} - ${s.course?.title}`,
-                              subtitle: `${s.detectedFacesCount || 60} Real Student Faces Scanned • Hall: ${s.classroom}`
-                            })}
-                            className="relative group inline-block w-14 h-10 rounded-lg overflow-hidden border border-[#00a896] bg-[#040d1a] shadow-md"
-                            title="Click to zoom classroom photo"
-                          >
-                            <img
-                              src={s.classPhoto}
-                              alt="Classroom"
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                              <Eye className="w-3.5 h-3.5 text-white" />
-                            </div>
-                          </button>
-                        ) : (
-                          <span className="text-slate-500 text-[10px]">No Photo</span>
-                        )}
-                      </td>
-
-                      {/* Classroom */}
-                      <td className="py-3.5 px-4 font-mono text-cyan-200">
-                        {s.classroom}
-                      </td>
-
-                      {/* Attendance % */}
-                      <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-block font-mono font-bold px-2.5 py-1 rounded-full text-xs ${
-                          s.attendancePercentage >= 75
-                            ? 'bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                        }`}>
-                          {s.attendancePercentage}% ({s.totalPresent}P / {s.totalAbsent}A)
-                        </span>
-                      </td>
-
-                      {/* Download Buttons: PDF, Excel, CSV */}
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => downloadAttendance(s, 'pdf')}
-                            className="px-2 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/30 text-[10px] font-bold flex items-center gap-1 transition-all"
-                            title="Download PDF Attendance"
-                          >
-                            <FileText className="w-3 h-3 text-rose-400" />
-                            PDF
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadAttendance(s, 'excel')}
-                            className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1 transition-all"
-                            title="Download Excel Sheet"
-                          >
-                            <FileSpreadsheet className="w-3 h-3 text-[#00C49F]" />
-                            Excel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadAttendance(s, 'csv')}
-                            className="px-2 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-white border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 transition-all"
-                            title="Download CSV"
-                          >
-                            <Download className="w-3 h-3 text-cyan-400" />
-                            CSV
-                          </button>
-                        </div>
-                      </td>
-
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              {stats.recentSessions.map(s => (
+                <div key={s._id} className="p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white">{s.course?.code} — {s.course?.title}</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/30">{s.attendancePercentage}%</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        Teacher: {s.teacher?.name} · {new Date(s.sessionDate).toLocaleDateString()} · {s.timeSlot}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Present: {s.totalPresent} / {s.totalEnrolled} · Absent: {s.totalAbsent}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {s.teacherPhoto && (
+                        <img src={s.teacherPhoto} alt="Teacher" className="w-10 h-10 rounded-xl object-cover border border-[#133966] cursor-pointer"
+                          onClick={() => setPreviewAuditModal({ url: s.teacherPhoto, title: 'Teacher Verification', subtitle: s.teacher?.name })} />
+                      )}
+                      {s.classPhoto && (
+                        <img src={s.classPhoto} alt="Classroom" className="w-10 h-10 rounded-xl object-cover border border-[#133966] cursor-pointer"
+                          onClick={() => setPreviewAuditModal({ url: s.classPhoto, title: 'Classroom Photo', subtitle: s.course?.code })} />
+                      )}
+                      <a href={api.getExportCsvUrl(s._id)} target="_blank" rel="noreferrer"
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1 hover:bg-emerald-500/30">
+                        <Download className="w-3.5 h-3.5" /> CSV
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
-            <div className="py-8 text-center text-xs text-slate-400">
-              No sessions conducted yet. Use "Seed 60 Students & Timetables" or login as Teacher to record attendance.
-            </div>
+            <div className="py-12 text-center text-slate-400 text-sm">No attendance sessions recorded yet.</div>
           )}
         </div>
       )}
 
-      {/* Lightbox Photo Preview Modal for Audit */}
+      {['calendar', 'announcements'].includes(activePage) && (
+        <AcademicHub user={user} adminCohort={{
+          branch: hasBranchSem ? selectedBranch : '',
+          semester: hasBranchSem ? selectedSemester : null,
+          standard: isSchool ? selectedStandard : '',
+          pucYear: isPUC ? selectedPucYear : '',
+          pucDept: isPUC ? selectedPucDept : ''
+        }} page={activePage} />
+      )}
+
+      {/* Audit photo lightbox */}
       {previewAuditModal && (
-        <div className="fixed inset-0 z-50 bg-[#040d1a]/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl bg-[#071b34] border border-[#133966] rounded-3xl overflow-hidden shadow-2xl relative text-white animate-in zoom-in-95 duration-200">
-            <div className="p-4 bg-[#040d1a] border-b border-[#133966] flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">{previewAuditModal.title}</h3>
-                <p className="text-xs text-[#00C49F] font-mono mt-0.5">{previewAuditModal.subtitle}</p>
-              </div>
-              <button
-                onClick={() => setPreviewAuditModal(null)}
-                className="px-3 py-1.5 rounded-xl bg-[#0b2444] text-xs font-bold text-slate-300 hover:text-white border border-[#133966]"
-              >
-                Close
-              </button>
-            </div>
-            <div className="p-4 bg-[#020814] flex items-center justify-center max-h-[75vh] overflow-auto">
-              <img
-                src={previewAuditModal.url}
-                alt="Audit Zoom"
-                className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-lg"
-              />
-            </div>
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setPreviewAuditModal(null)}>
+          <div className="max-w-2xl w-full space-y-3" onClick={e => e.stopPropagation()}>
+            <img src={previewAuditModal.url} alt={previewAuditModal.title} className="w-full rounded-2xl border border-[#133966] shadow-2xl max-h-[70vh] object-contain" />
+            <div className="text-center text-xs text-white font-semibold">{previewAuditModal.title} — {previewAuditModal.subtitle}</div>
+            <button onClick={() => setPreviewAuditModal(null)} className="block mx-auto px-6 py-2 rounded-xl bg-[#071b34] text-slate-300 text-xs font-bold border border-[#133966]">Close</button>
           </div>
         </div>
       )}
-
-      {/* Manual Timetable Add Modal */}
-      {showTimetableModal && (
-        <div className="fixed inset-0 z-50 bg-[#040d1a]/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-1">Add Lecture Slot (Division {selectedTimetableDiv})</h3>
-            <p className="text-xs text-slate-300 mb-4">Manual timetable scheduling</p>
-
-            <form onSubmit={handleCreateTimetableSlot} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Day of Week</label>
-                  <select
-                    value={ttDay}
-                    onChange={(e) => setTtDay(e.target.value)}
-                    className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
-                  >
-                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(d => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Time Slot</label>
-                  <select
-                    value={ttSlot}
-                    onChange={(e) => setTtSlot(e.target.value)}
-                    className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
-                  >
-                    {[
-                      '09:00 AM - 10:00 AM',
-                      '10:00 AM - 11:00 AM',
-                      '11:15 AM - 12:15 PM',
-                      '01:00 PM - 02:00 PM',
-                      '02:00 PM - 03:00 PM',
-                      '03:00 PM - 04:00 PM'
-                    ].map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Subject / Course</label>
-                <select
-                  value={ttCourseId}
-                  onChange={(e) => setTtCourseId(e.target.value)}
-                  className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                >
-                  {courses.map(c => (
-                    <option key={c._id} value={c._id}>{c.code} - {c.title}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Faculty Lecturer</label>
-                <select
-                  value={ttTeacherId}
-                  onChange={(e) => setTtTeacherId(e.target.value)}
-                  className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                >
-                  {teachersList.map(t => (
-                    <option key={t._id} value={t._id}>{t.name} ({t.teacherId})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Lecture Hall / Room</label>
-                <input
-                  type="text"
-                  value={ttClassroom}
-                  onChange={(e) => setTtClassroom(e.target.value)}
-                  className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none font-mono"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#133966]">
-                <button
-                  type="button"
-                  onClick={() => setShowTimetableModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-bold text-xs uppercase tracking-wider"
-                >
-                  Save Slot
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* New Course Modal */}
-      {showCourseModal && (
-        <div className="fixed inset-0 z-50 bg-[#040d1a]/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-1">Create Academic Course</h3>
-            <p className="text-xs text-slate-300 mb-4">Add curriculum course for vision tracking</p>
-
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              api.createCourse({
-                code: newCourseCode,
-                title: newCourseTitle,
-                department: newCourseDept,
-                semester: Number(newCourseSem),
-                section: newCourseSec,
-                teacherId: assignedTeacherId || null
-              }).then(() => {
-                setShowCourseModal(false);
-                setBanner('Course created successfully!');
-                loadCoursesAndTeachers();
-              }).catch(err => alert(err.message));
-            }} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Course Code</label>
-                <input
-                  type="text"
-                  required
-                  value={newCourseCode}
-                  onChange={(e) => setNewCourseCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. CS605"
-                  className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none uppercase"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">Course Title</label>
-                <input
-                  type="text"
-                  required
-                  value={newCourseTitle}
-                  onChange={(e) => setNewCourseTitle(e.target.value)}
-                  placeholder="e.g. Cloud Security & Cryptography"
-                  className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#133966]">
-                <button
-                  type="button"
-                  onClick={() => setShowCourseModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-bold text-xs uppercase tracking-wider"
-                >
-                  Save Course
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

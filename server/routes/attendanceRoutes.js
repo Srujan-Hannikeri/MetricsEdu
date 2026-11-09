@@ -13,4 +13,7 @@ router.get('/session/:sessionId', requireAuth, attendanceController.getSessionBy
 router.patch('/session/:sessionId/student/:studentId', requireAuth, isTeacher, attendanceController.updateStudentRecord);
 router.get('/session/:sessionId/export-csv', requireAuth, attendanceController.exportAttendanceCSV);
 
+// Check if attendance window is open for a specific course right now
+router.get('/window-check/:courseId', requireAuth, isTeacher, attendanceController.checkWindowForCourse);
+
 module.exports = router;

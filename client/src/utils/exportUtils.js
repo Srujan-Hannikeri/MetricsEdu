@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 /**
  * Export Attendance Session as Microsoft Excel (.xlsx) Sheet
@@ -186,7 +186,7 @@ export function exportToPDF(session) {
     rec.isManuallyOverridden ? 'Manual Override' : 'AI Detected'
   ]);
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: statsY + 48,
     head: [['#', 'USN', 'Student Name', 'Status', 'Match Confidence', 'Verification Mode']],
     body: tableData,

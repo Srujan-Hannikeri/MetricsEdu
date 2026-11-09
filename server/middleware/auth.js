@@ -1,20 +1,34 @@
-const passport = require('passport');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
-// Middleware to authenticate using Passport JWT
-const requireAuth = (req, res, next) => {
-  passport.authenticate('jwt', { session: false }, (err, user, info) => {
-    if (err) {
-      return next(err);
-    }
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: info && info.message ? info.message : 'Unauthorized: Valid authentication token required.'
-      });
+const requireAuth = async (req, res, next) => {
+  const authorization = req.headers.authorization || '';
+  const [scheme, token] = authorization.split(' ');
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized: Valid authentication token required.'
+    });
+  }
+
+  if (!process.env.JWT_SECRET) {
+    return next(new Error('JWT_SECRET is required to authenticate requests.'));
+  }
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(payload.id);
+    if (!user || !user.isActive) {
+      return res.status(401).json({ success: false, message: 'Invalid or inactive account.' });
     }
     req.user = user;
-    next();
-  })(req, res, next);
+    return next();
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Invalid or expired authentication token.' });
+    }
+    return next(error);
+  }
 };
 
 // Role-based authorization middleware

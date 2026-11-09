@@ -46,6 +46,17 @@ const attendanceSessionSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  institutionType: {
+    type: String,
+    enum: ['institute', 'school', 'pu_college', 'diploma', 'college'],
+    required: true
+  },
+  division: {
+    type: String,
+    trim: true,
+    uppercase: true,
+    default: ''
+  },
   classroom: {
     type: String,
     default: 'Smart Classroom A-101'

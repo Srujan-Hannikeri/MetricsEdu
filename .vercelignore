@@ -1,0 +1,9 @@
+.git/
+**/node_modules/
+server/.env
+server/.env.*
+**/.env
+**/.env.*
+server/data/db/
+server/uploads/
+*.log
