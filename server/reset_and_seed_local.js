@@ -110,18 +110,95 @@ function assertSafeTarget(uri) {
   }
 }
 
+function normalizeMongoUri(uri) {
+  if (typeof uri !== 'string' || !uri.trim()) {
+    throw new Error('Set MONGO_URI to the hosted MongoDB connection string.');
+  }
+
+  let normalized = uri.trim();
+  if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+
+  let schemeMatch = normalized.match(/^(mongodb(?:\+srv)?:\/\/)(.*)$/i);
+  if (!schemeMatch && /^[^/@\s]+:[^/@\s]+@[^/\s]+\.mongodb\.net(?:[/?#]|$)/i.test(normalized)) {
+    normalized = `mongodb+srv://${normalized}`;
+    schemeMatch = normalized.match(/^(mongodb(?:\+srv)?:\/\/)(.*)$/i);
+  }
+  if (!schemeMatch) {
+    const looksLikeHostOnly = /^[^/@\s]+\.mongodb\.net(?:[/?#]|$)/i.test(normalized);
+    const looksLikeCredentialsAndHost =
+      /^[^/@\s]+:[^/@\s]+@[^/\s]+\.mongodb\.net(?:[/?#]|$)/i.test(normalized);
+    throw new Error(looksLikeHostOnly
+      ? 'MONGO_URI contains only the Atlas hostname. Enter the complete driver URI, including username and password, starting with mongodb+srv://.'
+      : looksLikeCredentialsAndHost
+        ? 'MONGO_URI is missing the mongodb+srv:// prefix. Copy the complete Atlas driver URI, including that prefix.'
+        : 'MONGO_URI input is not a recognizable Atlas URI (mongodb+srv:// prefix: ' +
+          `${/^mongodb\+srv:\/\//i.test(normalized)}, ` +
+          `Atlas host suffix: ${/\.mongodb\.net(?:[/?#]|$)/i.test(normalized)}, ` +
+          `credentials separator: ${normalized.includes('@')}). ` +
+          'Paste the full Atlas driver URI from Connect → Drivers; do not paste a masked value or only one URI component.');
+  }
+
+  const scheme = schemeMatch[1];
+  const remainder = schemeMatch[2];
+  const credentialsEndInRemainder = remainder.lastIndexOf('@');
+  const hostStart = credentialsEndInRemainder === -1 ? 0 : credentialsEndInRemainder + 1;
+  const hostSuffixStart = remainder.slice(hostStart).search(/[/?#]/);
+  const authorityEnd = hostSuffixStart === -1 ? -1 : hostStart + hostSuffixStart;
+  const authority = authorityEnd === -1 ? remainder : remainder.slice(0, authorityEnd);
+  let suffix = authorityEnd === -1 ? '' : remainder.slice(authorityEnd);
+  const credentialsEnd = authority.lastIndexOf('@');
+  let normalizedAuthority = authority;
+
+  if (credentialsEnd !== -1) {
+    const credentials = authority.slice(0, credentialsEnd);
+    const separator = credentials.indexOf(':');
+    if (separator === -1) {
+      throw new Error('MONGO_URI credentials must include both username and password.');
+    }
+
+    const encodeCredential = value => {
+      try {
+        return encodeURIComponent(decodeURIComponent(value));
+      } catch {
+        return encodeURIComponent(value);
+      }
+    };
+    normalizedAuthority =
+      `${encodeCredential(credentials.slice(0, separator))}:` +
+      `${encodeCredential(credentials.slice(separator + 1))}@` +
+      authority.slice(credentialsEnd + 1);
+  }
+
+  if (!suffix || suffix.startsWith('?')) {
+    suffix = `/metricsedu${suffix}`;
+  } else if (/^\/(?:[?#]|$)/.test(suffix)) {
+    suffix = `/metricsedu${suffix.slice(1)}`;
+  }
+
+  normalized = `${scheme}${normalizedAuthority}${suffix}`;
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error('MONGO_URI is still invalid. Copy the Atlas driver URI and check its cluster hostname.');
+  }
+
+  if (!['mongodb:', 'mongodb+srv:'].includes(parsed.protocol)) {
+    throw new Error('MONGO_URI must use mongodb:// or mongodb+srv://.');
+  }
+  return normalized;
+}
+
 function assertSafeRemoteSeedTarget(uri) {
   if (process.env.VERCEL) {
     throw new Error('Run the remote seed command from your local computer, not a Vercel Function.');
   }
   if (!uri) throw new Error('Set MONGO_URI to the hosted MongoDB connection string.');
 
-  let parsed;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    throw new Error('MONGO_URI could not be parsed. Copy the Atlas driver URI and URL-encode any special characters in the username or password (for example, @ as %40).');
-  }
+  const parsed = new URL(uri);
 
   const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
   const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
@@ -645,9 +722,12 @@ async function verifyDataset(dataset) {
 }
 
 async function main() {
-  const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/metricsedu';
   const remoteSeed = process.argv.includes('--confirm-seed-remote');
+  const uri = remoteSeed
+    ? normalizeMongoUri(process.env.MONGO_URI)
+    : process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/metricsedu';
   if (remoteSeed) {
+    process.env.MONGO_URI = uri;
     assertSafeRemoteSeedTarget(process.env.MONGO_URI);
   } else {
     assertSafeTarget(uri);

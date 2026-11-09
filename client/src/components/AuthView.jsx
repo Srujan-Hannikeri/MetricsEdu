@@ -294,7 +294,13 @@ export default function AuthView({ onAuthSuccess }) {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => { setInstitutionType(t.id); setError(''); setIdentifier(''); setPassword(''); }}
+                  onClick={() => {
+                    setInstitutionType(t.id);
+                    if (t.id === 'institute' || t.id === 'diploma') setDepartment((t.id === 'diploma' ? DIPLOMA_BRANCHES : INST_BRANCHES)[0]);
+                    setError('');
+                    setIdentifier('');
+                    setPassword('');
+                  }}
                   className={`p-3 rounded-2xl border text-left transition-all ${
                     institutionType === t.id
                       ? `${t.activeColor} ring-1 ring-offset-0 ring-current`
@@ -478,17 +484,18 @@ export default function AuthView({ onAuthSuccess }) {
                   </div>
                 )}
 
-                {/* Institute / Diploma student */}
-                {(institutionType === 'institute' || institutionType === 'diploma') && selectedRole === 'student' && (
+                {/* Institute / Diploma teacher and student */}
+                {(institutionType === 'institute' || institutionType === 'diploma') &&
+                  (selectedRole === 'teacher' || selectedRole === 'student') && (
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-semibold text-slate-300 mb-1 block">Department / Branch *</label>
-                      <select value={department} onChange={e => setDepartment(e.target.value)}
+                      <select value={department} onChange={e => setDepartment(e.target.value)} required
                         className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
                         {(institutionType === 'diploma' ? DIPLOMA_BRANCHES : INST_BRANCHES).map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                     </div>
-                    <div>
+                    {selectedRole === 'student' && <div>
                       <label className="text-xs font-semibold text-slate-300 mb-1 block">Semester *</label>
                       <select value={semester} onChange={e => setSemester(Number(e.target.value))}
                         className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#00a896]">
@@ -496,7 +503,7 @@ export default function AuthView({ onAuthSuccess }) {
                           <option key={s} value={s}>Semester {s}</option>
                         ))}
                       </select>
-                    </div>
+                    </div>}
                   </div>
                 )}
               </>
