@@ -35,6 +35,21 @@
   box-shadow: 0 0 25px -5px rgba(14, 165, 233, 0.25);
 }
 
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Touch friendly momentum scrolling */
+.touch-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ========================================================
    OFFICIAL PRINT STYLING: PRINT ONLY THE TIMETABLE SHEET
    Removes all top headers, navbars, banners, buttons, steppers.

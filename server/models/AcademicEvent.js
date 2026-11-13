@@ -16,4 +16,7 @@ const academicEventSchema = new mongoose.Schema({
   division: { type: String, trim: true, uppercase: true, default: '' }
 }, { timestamps: true });
 
+academicEventSchema.index({ adminId: 1, institutionType: 1, startDate: 1 });
+academicEventSchema.index({ adminId: 1, startDate: 1 });
+
 module.exports = mongoose.model('AcademicEvent', academicEventSchema);

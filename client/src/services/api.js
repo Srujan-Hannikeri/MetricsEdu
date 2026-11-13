@@ -8,16 +8,21 @@ export const removeToken = () => localStorage.removeItem('metricsedu_token');
 
 export async function uploadBlob(file, category) {
   if (import.meta.env.VITE_USE_VERCEL_BLOB !== 'true') return null;
-  const token = getToken();
-  if (!token) throw new Error('Sign in before uploading a file.');
-  const blob = await upload(`${category}/${file.name}`, file, {
-    access: 'public',
-    handleUploadUrl: '/api/campus/blob-upload',
-    clientPayload: category,
-    headers: { Authorization: `Bearer ${token}` },
-    multipart: file.size > 5 * 1024 * 1024
-  });
-  return blob.url;
+  try {
+    const token = getToken();
+    if (!token) return null;
+    const blob = await upload(`${category}/${file.name}`, file, {
+      access: 'public',
+      handleUploadUrl: '/api/campus/blob-upload',
+      clientPayload: category,
+      headers: { Authorization: `Bearer ${token}` },
+      multipart: file.size > 5 * 1024 * 1024
+    });
+    return blob?.url || null;
+  } catch (blobErr) {
+    console.warn('Vercel Blob upload skipped or unavailable, falling back to direct server upload:', blobErr?.message);
+    return null;
+  }
 }
 
 export async function request(endpoint, options = {}) {
@@ -158,5 +163,19 @@ export const api = {
   deleteAcademicEvent: (eventId) => request(`/campus/events/${eventId}`, { method: 'DELETE' }),
   getLearningPosts: () => request('/campus/posts'),
   createLearningPost: (formData) => request('/campus/posts', { method: 'POST', body: formData }),
-  deleteLearningPost: (postId) => request(`/campus/posts/${postId}`, { method: 'DELETE' })
+  deleteLearningPost: (postId) => request(`/campus/posts/${postId}`, { method: 'DELETE' }),
+  submitQuiz: (postId, answers) => request(`/campus/posts/${postId}/quiz-submit`, { method: 'POST', body: JSON.stringify({ answers }) }),
+  getQuizResults: (postId) => request(`/campus/posts/${postId}/quiz-results`),
+  submitFeedback: (payload) => request('/campus/feedback', { method: 'POST', body: JSON.stringify(payload) }),
+
+  // ─── Developer Portal ─────────────────────────────────────────────────────
+  devLogin: (accessKey) => request('/dev/auth', { method: 'POST', body: JSON.stringify({ accessKey }) }),
+  getDevMetrics: (token) => request('/dev/metrics', { headers: { Authorization: `Bearer ${token}` } }),
+  generateDevIds: (token, payload) => request('/dev/generate-ids', { method: 'POST', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}` } }),
+  getDevBugs: (token, params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/dev/bugs${q ? '?' + q : ''}`, { headers: { Authorization: `Bearer ${token}` } });
+  },
+  updateDevBugStatus: (token, bugId, payload) => request(`/dev/bugs/${bugId}`, { method: 'PATCH', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}` } }),
+  deleteDevBug: (token, bugId) => request(`/dev/bugs/${bugId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
 };

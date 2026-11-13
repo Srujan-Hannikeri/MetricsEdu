@@ -41,9 +41,9 @@ function TeacherCard({ teacher }) {
       : 'bg-[#071b34]/80 border-[#133966]'}`}>
 
       {/* Main row */}
-      <div className="flex items-center gap-3 p-4">
+      <div className="flex items-start sm:items-center gap-3 p-3.5 sm:p-4">
         {/* Avatar */}
-        <div className={`w-11 h-11 rounded-xl overflow-hidden shrink-0 border-2 ${inClass ? 'border-emerald-500/60' : 'border-[#133966]'}`}>
+        <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden shrink-0 border-2 ${inClass ? 'border-emerald-500/60' : 'border-[#133966]'}`}>
           <img
             src={teacher.profileImage || '/logo.jpg'}
             alt={teacher.name}
@@ -55,21 +55,21 @@ function TeacherCard({ teacher }) {
         {/* Name + status */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-bold text-white truncate">{teacher.name}</span>
+            <span className="text-xs sm:text-sm font-bold text-white truncate">{teacher.name}</span>
             <StatusBadge status={teacher.status} />
           </div>
-          <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">
+          <div className="text-[10px] sm:text-[11px] text-slate-400 font-mono mt-0.5 truncate">
             {teacher.teacherId} · {teacher.department}
           </div>
 
           {/* Active class details */}
           {inClass && teacher.activeClass && (
-            <div className="mt-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] space-y-0.5">
+            <div className="mt-2 p-2 sm:p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[10px] sm:text-[11px] space-y-0.5">
               <div className="flex items-center gap-1.5 text-emerald-300 font-bold">
                 <BookOpen className="w-3.5 h-3.5 shrink-0" />
                 {teacher.activeClass.subject}
               </div>
-              <div className="flex items-center gap-3 text-slate-300 mt-1 flex-wrap">
+              <div className="flex items-center gap-2 sm:gap-3 text-slate-300 mt-1 flex-wrap">
                 <span className="flex items-center gap-1"><Layers className="w-3 h-3 text-cyan-400" /> Sem {teacher.activeClass.semester}</span>
                 <span className="flex items-center gap-1"><Users className="w-3 h-3 text-cyan-400" /> Div {teacher.activeClass.division}</span>
                 <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-cyan-400" /> {teacher.activeClass.classroom}</span>
@@ -176,10 +176,10 @@ export default function FacultyTrackerPage() {
     <div className="space-y-6">
 
       {/* Header */}
-      <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl">
+      <div className="bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2">
               <MapPin className="w-5 h-5 text-[#00C49F]" />
               Faculty Location Tracker
             </h2>
@@ -189,9 +189,9 @@ export default function FacultyTrackerPage() {
           </div>
 
           {/* Live clock + last refresh */}
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-xl font-black font-mono text-[#00C49F] tracking-widest">{timeStr}</div>
+          <div className="flex items-center justify-between md:justify-end gap-3 sm:gap-4 w-full md:w-auto">
+            <div className="text-left md:text-right">
+              <div className="text-lg sm:text-xl font-black font-mono text-[#00C49F] tracking-widest">{timeStr}</div>
               <div className="text-[10px] text-slate-400 font-mono">{todayName} · {now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
               {lastRefresh && (
                 <div className="text-[10px] text-slate-500 mt-0.5">
@@ -211,24 +211,24 @@ export default function FacultyTrackerPage() {
         </div>
 
         {/* Summary stats */}
-        <div className="grid grid-cols-3 gap-3 mt-5">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 mt-4 sm:mt-5">
           <div
             onClick={() => setStatusFilter('ALL')}
-            className={`p-3 rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'ALL' ? 'bg-[#00a896]/15 border-[#00C49F]/50' : 'bg-[#040d1a] border-[#133966] hover:border-[#00a896]/50'}`}>
-            <div className="text-2xl font-black text-white font-mono">{teachers.length}</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Total Faculty</div>
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'ALL' ? 'bg-[#00a896]/15 border-[#00C49F]/50' : 'bg-[#040d1a] border-[#133966] hover:border-[#00a896]/50'}`}>
+            <div className="text-xl sm:text-2xl font-black text-white font-mono">{teachers.length}</div>
+            <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 truncate">Total Faculty</div>
           </div>
           <div
             onClick={() => setStatusFilter('in_class')}
-            className={`p-3 rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'in_class' ? 'bg-emerald-500/15 border-emerald-500/50' : 'bg-[#040d1a] border-[#133966] hover:border-emerald-500/30'}`}>
-            <div className="text-2xl font-black text-emerald-300 font-mono">{inClassCount}</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Currently In Class</div>
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'in_class' ? 'bg-emerald-500/15 border-emerald-500/50' : 'bg-[#040d1a] border-[#133966] hover:border-emerald-500/30'}`}>
+            <div className="text-xl sm:text-2xl font-black text-emerald-300 font-mono">{inClassCount}</div>
+            <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 truncate">In Class</div>
           </div>
           <div
             onClick={() => setStatusFilter('in_cabin')}
-            className={`p-3 rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'in_cabin' ? 'bg-slate-500/15 border-slate-500/50' : 'bg-[#040d1a] border-[#133966] hover:border-slate-500/30'}`}>
-            <div className="text-2xl font-black text-slate-400 font-mono">{inCabinCount}</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">In Cabin / Free</div>
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border cursor-pointer transition-all text-center ${statusFilter === 'in_cabin' ? 'bg-slate-500/15 border-slate-500/50' : 'bg-[#040d1a] border-[#133966] hover:border-slate-500/30'}`}>
+            <div className="text-xl sm:text-2xl font-black text-slate-400 font-mono">{inCabinCount}</div>
+            <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 truncate">In Cabin / Free</div>
           </div>
         </div>
       </div>

@@ -711,9 +711,9 @@ export default function TimetableTable({
       {/* Visual Timetable Document Container (Target for Official Print View) */}
       <div
         id="printable-timetable-sheet"
-        className="printable-timetable-sheet bg-white text-slate-900 rounded-3xl p-4 sm:p-6 shadow-2xl border-2 border-slate-300 font-sans overflow-x-auto print:border-none print:shadow-none print:p-0"
+        className="printable-timetable-sheet bg-white text-slate-900 rounded-2xl sm:rounded-3xl p-3 sm:p-6 shadow-2xl border-2 border-slate-300 font-sans overflow-x-auto no-scrollbar touch-scroll print:border-none print:shadow-none print:p-0"
       >
-        
+        <div className="min-w-[660px]">
         {/* Document Header Table Banner */}
         <div className="border-2 border-black mb-0">
           
@@ -1129,12 +1129,13 @@ export default function TimetableTable({
         <div className="mt-2 text-right text-[10px] text-slate-500 font-mono">
           * Authorized by Institutional Academic Dean & Timetable Committee • Generated via MetricsEdu
         </div>
+        </div>
       </div>
 
       {/* Admin Slot Edit Modal with Proper Conflict & 15-min Break Validation */}
       {editingSlot && (
         <div className="fixed inset-0 z-50 bg-[#040d1a]/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-3xl p-6 shadow-2xl text-white">
+          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl text-white max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-[#133966] mb-4">
               <div className="flex items-center gap-2">
                 <Edit3 className="w-5 h-5 text-[#00C49F]" />

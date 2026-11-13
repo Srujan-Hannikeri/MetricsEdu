@@ -617,7 +617,7 @@ export default function AdminDashboard({ user }) {
   // RENDER
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-8">
 
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -626,7 +626,7 @@ export default function AdminDashboard({ user }) {
             <span className="p-1 px-2.5 rounded-lg bg-rose-500/15 text-rose-400 font-mono text-xs font-bold border border-rose-500/30">INSTITUTION ADMIN</span>
             <span className="text-xs text-slate-400 font-mono">ID: {user?.adminId}</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">MetricsEdu Institutional Management</h1>
+          <h1 className="text-xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">MetricsEdu Institutional Management</h1>
           <p className="text-xs sm:text-sm text-cyan-200/70 font-medium">One Connected Platform. One Smart Classroom.</p>
         </div>
         <div className="flex items-center gap-2.5">
@@ -646,8 +646,9 @@ export default function AdminDashboard({ user }) {
         </div>
       </div>
 
-      {/* Navigation tabs */}
-      <div className="flex flex-wrap items-center gap-2 bg-[#071b34] p-2 rounded-2xl border border-[#133966] shadow-md">
+      {/* Navigation tabs (Horizontally Scrollable on Mobile) */}
+      <div className="w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
+        <div className="flex w-max min-w-full items-center gap-1.5">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'schedule-setup', label: 'Schedule Setup', icon: Settings },
@@ -664,13 +665,14 @@ export default function AdminDashboard({ user }) {
           const isActive = activePage === tab.id;
           return (
             <button key={tab.id} onClick={() => { setActivePage(tab.id); setBanner({ type: '', msg: '' }); }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${isActive
+              className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold transition-all ${isActive
                 ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
                 : 'text-slate-300 hover:text-white hover:bg-[#0b2444]'}`}>
               <Icon className="w-4 h-4" />{tab.label}
             </button>
           );
         })}
+        </div>
       </div>
 
       {/* Banner */}
@@ -690,8 +692,8 @@ export default function AdminDashboard({ user }) {
           PAGE: OVERVIEW
       ==================================================================== */}
       {activePage === 'overview' && (
-        <div className="space-y-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="space-y-6 sm:space-y-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
             {[
               { label: 'Total Students', value: stats?.totalStudents ?? 60, sub: `${stats?.faceRegistrationRate ?? 100}% Biometrics`, icon: GraduationCap, color: 'text-[#38bdf8]', page: 'users' },
               { label: 'Faculty', value: stats?.totalTeachers ?? 8, sub: 'Assigned to Subjects', icon: School, color: 'text-[#00C49F]', page: 'teachers' },
@@ -701,22 +703,22 @@ export default function AdminDashboard({ user }) {
               const Icon = card.icon;
               return (
                 <div key={card.label} onClick={() => setActivePage(card.page)}
-                  className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-2xl p-5 shadow-lg cursor-pointer group transition-all">
+                  className="bg-[#071b34]/95 border border-[#133966] hover:border-[#00C49F] rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-lg cursor-pointer group transition-all">
                   <div className="flex items-center justify-between text-slate-300">
-                    <span className="text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F]">{card.label}</span>
-                    <Icon className={`w-4 h-4 ${card.color}`} />
+                    <span className="text-[10px] sm:text-xs uppercase font-bold tracking-wider group-hover:text-[#00C49F] truncate mr-1">{card.label}</span>
+                    <Icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${card.color} shrink-0`} />
                   </div>
-                  <div className="text-3xl font-black font-mono text-white mt-2 group-hover:text-[#00C49F]">{card.value}</div>
-                  <div className="text-[11px] text-[#00C49F] mt-2 font-mono flex items-center justify-between">
-                    <span>{card.sub}</span>
-                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-white mt-1 sm:mt-2 group-hover:text-[#00C49F]">{card.value}</div>
+                  <div className="text-[10px] sm:text-[11px] text-[#00C49F] mt-1.5 sm:mt-2 font-mono flex items-center justify-between">
+                    <span className="truncate">{card.sub}</span>
+                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform shrink-0 ml-1" />
                   </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-6">
             {[
               { page: 'schedule-setup', icon: Settings, color: 'text-[#00C49F]', title: 'Schedule Setup Wizard', desc: 'Step 1: Set semester dates → Step 2: Add subjects → Step 3: Auto-generate timetable for all divisions.' },
               { page: 'divisions', icon: Users, color: 'text-[#38bdf8]', title: 'Student Division Allocator', desc: 'Auto-split students into Div A, B, C by class strength. Manual overrides anytime.' },
@@ -725,9 +727,9 @@ export default function AdminDashboard({ user }) {
               const Icon = c.icon;
               return (
                 <div key={c.page} onClick={() => setActivePage(c.page)}
-                  className="p-6 rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all">
-                  <Icon className={`w-8 h-8 ${c.color} mb-3`} />
-                  <h3 className="text-base font-bold text-white">{c.title}</h3>
+                  className="p-4 sm:p-6 rounded-2xl sm:rounded-3xl bg-gradient-to-br from-[#071b34] to-[#0b2444] border border-[#133966] hover:border-[#00C49F] cursor-pointer shadow-xl transition-all">
+                  <Icon className={`w-6 h-6 sm:w-8 sm:h-8 ${c.color} mb-2 sm:mb-3`} />
+                  <h3 className="text-sm sm:text-base font-bold text-white">{c.title}</h3>
                   <p className="text-xs text-slate-300 mt-1">{c.desc}</p>
                 </div>
               );
@@ -1103,14 +1105,14 @@ export default function AdminDashboard({ user }) {
 
             {/* Add subject form - hidden when locked */}
             {!activeSemConfig?.isLocked && (
-            <form onSubmit={handleAddSubject} className="grid grid-cols-1 md:grid-cols-5 gap-3 p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
+            <form onSubmit={handleAddSubject} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 p-3 sm:p-4 rounded-2xl bg-[#040d1a] border border-[#133966]">
               <div>
                 <label className="text-xs font-semibold text-slate-300 mb-1 block">Subject Code *</label>
                 <input type="text" placeholder="e.g. CS501 (same for every division)" value={subjectForm.code}
                   onChange={e => setSubjectForm(p => ({ ...p, code: e.target.value, teacherId: '' }))}
                   className="w-full bg-[#071b34] border border-[#133966] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#00a896]" />
               </div>
-              <div className="md:col-span-2">
+              <div className="sm:col-span-2 lg:col-span-2">
                 <label className="text-xs font-semibold text-slate-300 mb-1 block">Subject Title *</label>
                 <input type="text" placeholder="e.g. Data Structures" value={subjectForm.title}
                   onChange={e => setSubjectForm(p => ({ ...p, title: e.target.value }))}
@@ -1131,9 +1133,9 @@ export default function AdminDashboard({ user }) {
                   {getAvailableTeachers(selectedSubjectDivision, subjectForm.code).length === 0 && <option disabled>No available teachers</option>}
                 </select>
               </div>
-              <div className="md:col-span-5 flex gap-2">
+              <div className="sm:col-span-2 lg:col-span-5 flex gap-2">
                 <button type="submit" disabled={savingSubject}
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50 flex items-center gap-1.5">
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] text-xs font-black disabled:opacity-50 flex items-center justify-center gap-1.5">
                   <Plus className="w-3.5 h-3.5" /> {savingSubject ? 'Adding...' : 'Add Subject'}
                 </button>
               </div>
@@ -1152,18 +1154,18 @@ export default function AdminDashboard({ user }) {
                     subject.teacher
                   ])).values()];
                   return (
-                  <div key={group.code} className="flex items-center justify-between p-3 rounded-xl bg-[#040d1a] border border-[#133966]">
-                    <div className="flex items-center gap-3">
-                      <span className="px-2 py-0.5 rounded-lg bg-[#00a896]/20 text-[#00C49F] text-[10px] font-mono font-bold border border-[#00a896]/30">{group.code}</span>
-                      <div>
-                        <div className="text-xs font-bold text-white">{group.title}</div>
+                  <div key={group.code} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-[#040d1a] border border-[#133966]">
+                    <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                      <span className="px-2 py-0.5 rounded-lg bg-[#00a896]/20 text-[#00C49F] text-[10px] font-mono font-bold border border-[#00a896]/30 shrink-0">{group.code}</span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{group.title}</div>
                         <div className="text-[10px] text-slate-400">
                           {sub.semesterHours ? `${sub.semesterHours} hrs/semester` : `${sub.weeklyHours} hrs/week (legacy)`}
                           {` · Division ${selectedSubjectDivision}`}
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 flex-wrap">
                       {uniqueTeachers.length > 0 && (
                         <span className="flex items-center gap-1.5 text-[11px] text-[#00C49F]">
                           <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1235,10 +1237,10 @@ export default function AdminDashboard({ user }) {
           PAGE: TIMETABLE VIEWER
       ==================================================================== */}
       {activePage === 'timetable' && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl space-y-6">
+        <div className="bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-6">
 
           {/* Selectors — institution-aware */}
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             {hasBranchSem && (
               <>
                 <div>
@@ -1300,7 +1302,7 @@ export default function AdminDashboard({ user }) {
             {/* Division switcher */}
             <div>
               <label className="text-[10px] font-bold uppercase text-slate-400 mb-1 block">Division</label>
-              <div className="flex bg-[#040d1a] p-1 rounded-xl border border-[#133966] gap-0.5">
+              <div className="flex bg-[#040d1a] p-1 rounded-xl border border-[#133966] gap-0.5 overflow-x-auto max-w-full">
                 {DIVISIONS.map(div => (
                   <button key={div} onClick={() => { setSelectedTimetableDiv(div); loadTimetable(div); }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedTimetableDiv === div ? 'bg-[#00C49F] text-[#040d1a]' : 'text-slate-400 hover:text-white'}`}>
@@ -1310,13 +1312,13 @@ export default function AdminDashboard({ user }) {
               </div>
             </div>
 
-            <div className="ml-auto flex gap-2">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:ml-auto">
               <button onClick={() => setShowTimetableModal(true)}
-                className="px-3 py-2 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1">
+                className="flex-1 sm:flex-none justify-center px-3 py-2 rounded-xl bg-[#0b2444] hover:bg-[#133966] text-[#00C49F] border border-[#00a896]/30 text-xs font-bold flex items-center gap-1">
                 <Plus className="w-4 h-4" /> Add Slot
               </button>
               <button onClick={() => setActivePage('schedule-setup')}
-                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs flex items-center gap-1.5">
+                className="flex-1 sm:flex-none justify-center px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" /> Auto-Generate
               </button>
             </div>
@@ -1535,8 +1537,8 @@ export default function AdminDashboard({ user }) {
             </div>
 
             {/* Students table */}
-            <div className="overflow-auto max-h-96 rounded-2xl border border-[#133966]">
-              <table className="w-full text-xs">
+            <div className="overflow-auto max-h-96 rounded-2xl border border-[#133966] no-scrollbar touch-scroll">
+              <table className="w-full text-xs min-w-[550px]">
                 <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider sticky top-0">
                   <tr>
                     <th className="text-left p-3 font-bold">USN</th>
@@ -1634,8 +1636,8 @@ export default function AdminDashboard({ user }) {
               </div>
             </div>
 
-            <div className="overflow-auto rounded-2xl border border-[#133966]">
-              <table className="w-full text-xs">
+            <div className="overflow-auto rounded-2xl border border-[#133966] no-scrollbar touch-scroll">
+              <table className="w-full text-xs min-w-[550px]">
                 <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider">
                   <tr>
                     <th className="text-left p-3 font-bold">Code</th>
@@ -1833,8 +1835,8 @@ export default function AdminDashboard({ user }) {
           {loadingUsers ? (
             <div className="py-8 text-center text-slate-400 text-xs">Loading users...</div>
           ) : (
-            <div className="overflow-auto rounded-2xl border border-[#133966] max-h-[600px]">
-              <table className="w-full text-xs">
+            <div className="overflow-auto rounded-2xl border border-[#133966] max-h-[600px] no-scrollbar touch-scroll">
+              <table className="w-full text-xs min-w-[650px]">
                 <thead className="bg-[#040d1a] text-slate-400 uppercase tracking-wider sticky top-0">
                   <tr>
                     <th className="text-left p-3">Name</th>

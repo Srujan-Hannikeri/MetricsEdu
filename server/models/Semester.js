@@ -51,4 +51,9 @@ const semesterSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+semesterSchema.index({ adminId: 1, institutionType: 1, createdAt: -1 });
+semesterSchema.index({ adminId: 1, branch: 1, semesterNumber: 1 });
+semesterSchema.index({ adminId: 1, standard: 1 });
+semesterSchema.index({ adminId: 1, pucYear: 1, pucDept: 1 });
+
 module.exports = mongoose.model('Semester', semesterSchema);

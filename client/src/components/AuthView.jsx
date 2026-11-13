@@ -229,25 +229,25 @@ export default function AuthView({ onAuthSuccess }) {
   const roleIcons = { admin: ShieldCheck, teacher: SchoolIcon, student: GraduationCap };
 
   return (
-    <div className="min-h-[calc(100vh-5rem)] flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-0 bg-[#071b34]/95 border border-[#133966] rounded-3xl shadow-2xl overflow-hidden">
+    <div className="min-h-[calc(100vh-5rem)] flex items-center justify-center p-3 sm:p-6 lg:p-8">
+      <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-0 bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden">
 
         {/* ── LEFT: demo accounts ───────────────────────────────────────────── */}
-        <div className="lg:col-span-5 bg-gradient-to-br from-[#040d1a] to-[#071b34] p-6 sm:p-8 flex flex-col gap-5 border-b lg:border-b-0 lg:border-r border-[#133966]">
+        <div className="lg:col-span-5 bg-gradient-to-br from-[#040d1a] to-[#071b34] p-4 sm:p-8 flex flex-col gap-4 sm:gap-5 border-t lg:border-t-0 lg:border-r border-[#133966] order-2 lg:order-1">
 
           {/* Logo */}
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-[#00a896]/20 border border-[#00a896]/40 p-1 flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-[#00a896]/20 border border-[#00a896]/40 p-1 flex items-center justify-center shrink-0">
               <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover rounded-lg" />
             </div>
             <div>
-              <h1 className="text-lg font-black text-white">MetricsEdu</h1>
-              <p className="text-[10px] text-[#00C49F] font-bold tracking-wider">SMART CLASSROOM</p>
+              <h1 className="text-base sm:text-lg font-black text-white">MetricsEdu</h1>
+              <p className="text-[9px] sm:text-[10px] text-[#00C49F] font-bold tracking-wider">SMART CLASSROOM</p>
             </div>
           </div>
 
           {/* Demo accounts for selected institution */}
-          <div className="bg-[#040d1a]/85 rounded-2xl p-4 border border-[#133966] flex-1">
+          <div className="bg-[#040d1a]/85 rounded-2xl p-3.5 sm:p-4 border border-[#133966] flex-1">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] uppercase tracking-wider font-bold text-slate-300">⚡ Demo Accounts</span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${instCfg?.color || ''}`}>{instCfg?.shortLabel}</span>
@@ -260,18 +260,18 @@ export default function AuthView({ onAuthSuccess }) {
                   student: 'text-[#38bdf8] bg-cyan-500/10 border-cyan-500/30 hover:border-cyan-500/60' };
                 return (
                   <button key={i} onClick={() => handleQuickDemo(acc)}
-                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between group bg-[#071b34] ${colors[acc.role]}`}>
-                    <div className="flex items-center gap-2.5">
-                      <div className={`p-1.5 rounded-lg border ${colors[acc.role]}`}>
+                    className={`w-full text-left p-2 sm:p-2.5 rounded-xl border transition-all flex items-center justify-between group bg-[#071b34] ${colors[acc.role]}`}>
+                    <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+                      <div className={`p-1.5 rounded-lg border ${colors[acc.role]} shrink-0`}>
                         <Icon className="w-3.5 h-3.5" />
                       </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-100">{acc.label}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{acc.id}</div>
-                        <div className="text-[9px] text-slate-500 mt-0.5">{acc.desc}</div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-100 truncate">{acc.label}</div>
+                        <div className="text-[10px] text-slate-400 font-mono truncate">{acc.id}</div>
+                        <div className="text-[9px] text-slate-500 mt-0.5 truncate">{acc.desc}</div>
                       </div>
                     </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:translate-x-1 transition-transform shrink-0" />
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:translate-x-1 transition-transform shrink-0 ml-1" />
                   </button>
                 );
               })}
@@ -284,7 +284,7 @@ export default function AuthView({ onAuthSuccess }) {
         </div>
 
         {/* ── RIGHT: Auth form ─────────────────────────────────────────────────── */}
-        <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-center gap-5">
+        <div className="lg:col-span-7 p-4 sm:p-8 flex flex-col justify-center gap-4 sm:gap-5 order-1 lg:order-2">
 
           {/* Institution type selector */}
           <div>
@@ -301,24 +301,24 @@ export default function AuthView({ onAuthSuccess }) {
                     setIdentifier('');
                     setPassword('');
                   }}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
+                  className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border text-left transition-all ${
                     institutionType === t.id
                       ? `${t.activeColor} ring-1 ring-offset-0 ring-current`
                       : 'border-[#133966] hover:border-slate-600 bg-[#040d1a]/60'
                   }`}
                 >
-                  <div className="text-base mb-0.5">{t.emoji}</div>
-                  <div className={`text-xs font-bold ${institutionType === t.id ? t.color.split(' ')[0] : 'text-slate-300'}`}>{t.shortLabel}</div>
-                  <div className="text-[10px] text-slate-500 leading-tight mt-0.5">{t.desc}</div>
+                  <div className="text-sm sm:text-base mb-0.5">{t.emoji}</div>
+                  <div className={`text-xs font-bold leading-tight ${institutionType === t.id ? t.color.split(' ')[0] : 'text-slate-300'}`}>{t.shortLabel}</div>
+                  <div className="text-[9px] sm:text-[10px] text-slate-500 leading-tight mt-0.5 line-clamp-2">{t.desc}</div>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Mode switcher */}
-          <div className="flex items-center justify-between pb-4 border-b border-[#133966]">
+          <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-[#133966]">
             <div>
-              <h3 className="text-xl font-black text-white">{mode === 'login' ? 'Sign In' : 'Create Account'}</h3>
+              <h3 className="text-lg sm:text-xl font-black text-white">{mode === 'login' ? 'Sign In' : 'Create Account'}</h3>
               <p className="text-xs text-cyan-200/70 mt-0.5">{instCfg?.emoji} {instCfg?.label} Portal</p>
             </div>
             <div className="flex bg-[#040d1a] p-1 rounded-xl border border-[#133966]">
@@ -327,7 +327,7 @@ export default function AuthView({ onAuthSuccess }) {
                       setMode(m);
                       setError('');
                     }}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all capitalize ${mode === m
+                  className={`px-3 sm:px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all capitalize ${mode === m
                     ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
                     : 'text-slate-400 hover:text-white'}`}>
                   {m === 'login' ? 'Login' : 'Register'}
@@ -337,7 +337,7 @@ export default function AuthView({ onAuthSuccess }) {
           </div>
 
           {/* Role selector */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
             {[
               { id: 'admin', label: 'Admin', sub: 'Admin ID' },
               { id: 'teacher', label: institutionType === 'school' ? 'Teacher' : 'Lecturer', sub: 'Teacher ID' },
@@ -346,12 +346,12 @@ export default function AuthView({ onAuthSuccess }) {
               const Icon = roleIcons[r.id];
               return (
                 <button key={r.id} onClick={() => { setSelectedRole(r.id); setError(''); }}
-                  className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${selectedRole === r.id
+                  className={`p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${selectedRole === r.id
                     ? 'bg-[#0b2444] border-[#00C49F] ring-1 ring-[#00C49F]/50'
                     : 'bg-[#040d1a]/80 border-[#133966] hover:border-slate-600 text-slate-400'}`}>
-                  <Icon className={`w-5 h-5 ${selectedRole === r.id ? 'text-[#00C49F]' : 'text-slate-500'}`} />
-                  <span className={`text-xs font-bold ${selectedRole === r.id ? 'text-white' : 'text-slate-300'}`}>{r.label}</span>
-                  <span className="text-[10px] font-mono text-cyan-200/60">{r.sub}</span>
+                  <Icon className={`w-4 h-4 sm:w-5 sm:h-5 ${selectedRole === r.id ? 'text-[#00C49F]' : 'text-slate-500'}`} />
+                  <span className={`text-[11px] sm:text-xs font-bold truncate max-w-full ${selectedRole === r.id ? 'text-white' : 'text-slate-300'}`}>{r.label}</span>
+                  <span className="text-[9px] sm:text-[10px] font-mono text-cyan-200/60 truncate max-w-full">{r.sub}</span>
                 </button>
               );
             })}
@@ -466,7 +466,7 @@ export default function AuthView({ onAuthSuccess }) {
 
                 {/* PU College student/teacher */}
                 {institutionType === 'pu_college' && (selectedRole === 'student' || selectedRole === 'teacher') && (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-semibold text-slate-300 mb-1 block">PUC Year *</label>
                       <select value={pucYear} onChange={e => setPucYear(e.target.value)}
@@ -487,7 +487,7 @@ export default function AuthView({ onAuthSuccess }) {
                 {/* Institute / Diploma teacher and student */}
                 {(institutionType === 'institute' || institutionType === 'diploma') &&
                   (selectedRole === 'teacher' || selectedRole === 'student') && (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-semibold text-slate-300 mb-1 block">Department / Branch *</label>
                       <select value={department} onChange={e => setDepartment(e.target.value)} required

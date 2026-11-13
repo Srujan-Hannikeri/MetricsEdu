@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Megaphone, BookOpen, FileText, Trash2, Upload, Plus, RefreshCw, Download, Check } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Megaphone, BookOpen, FileText, Trash2, Upload, Plus, RefreshCw, Download, Check, Award, CheckCircle2, XCircle, Users } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { api } from '../services/api';
@@ -11,6 +11,7 @@ const dateValue = (date) => {
 const formatEventDate = (date) => new Date(`${String(date).slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, {
   day: 'numeric', month: 'short', year: 'numeric'
 });
+const calendarDataCache = { events: null, semesters: null, timestamp: 0 };
 const eventGroupKey = event => JSON.stringify([
   event.title?.trim().toLowerCase(),
   event.description?.trim(),
@@ -109,6 +110,11 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
     questions: [createEmptyQuestion()]
   });
   const [attachment, setAttachment] = useState(null);
+  const [announcementFilter, setAnnouncementFilter] = useState('all');
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [submittingQuiz, setSubmittingQuiz] = useState({});
+  const [viewingResults, setViewingResults] = useState({});
+  const [quizResultsData, setQuizResultsData] = useState({});
   const attachmentInputRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -486,9 +492,9 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {error && <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">{error}</div>}
-      {isCalendarPage && <section className="rounded-3xl border border-[#133966] bg-[#071b34]/95 p-5 sm:p-6 shadow-xl space-y-5">
+      {isCalendarPage && <section className="rounded-2xl sm:rounded-3xl border border-[#133966] bg-[#071b34]/95 p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-extrabold text-white"><CalendarDays className="h-5 w-5 text-[#00C49F]" /> Academic Calendar</h2>
@@ -512,21 +518,21 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
           </div>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)]">
-          <div className="rounded-2xl border border-[#133966] bg-[#040d1a] p-4">
+        <div className="grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)]">
+          <div className="rounded-xl sm:rounded-2xl border border-[#133966] bg-[#040d1a] p-3 sm:p-4">
             <div className="mb-4 flex items-center justify-between">
               <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="rounded-lg p-2 text-slate-300 hover:bg-[#133966]" aria-label="Previous month"><ChevronLeft className="h-4 w-4" /></button>
               <h3 className="text-sm font-bold text-white">{month.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3>
               <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="rounded-lg p-2 text-slate-300 hover:bg-[#133966]" aria-label="Next month"><ChevronRight className="h-4 w-4" /></button>
             </div>
-            <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-slate-500">
+            <div className="grid grid-cols-7 gap-0.5 sm:gap-1 text-center text-[10px] font-bold uppercase text-slate-500">
               {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => <span key={day} className="py-2">{day}</span>)}
               {monthDays.map(day => {
                 const key = dateValue(day);
                 const marked = eventsForDate(day);
                 return (
                   <button key={key} type="button" onClick={() => setSelectedDate(key)}
-                    className={`relative min-h-12 rounded-lg border px-1 py-2 text-xs ${day.getMonth() === month.getMonth() ? 'text-slate-200' : 'text-slate-600'} ${key === selectedDate ? 'border-[#00C49F] bg-[#00a896]/15' : 'border-transparent hover:border-[#133966]'}`}>
+                    className={`relative min-h-10 sm:min-h-12 rounded-lg border px-0.5 sm:px-1 py-1.5 sm:py-2 text-[11px] sm:text-xs ${day.getMonth() === month.getMonth() ? 'text-slate-200' : 'text-slate-600'} ${key === selectedDate ? 'border-[#00C49F] bg-[#00a896]/15' : 'border-transparent hover:border-[#133966]'}`}>
                     {day.getDate()}
                     {marked.length > 0 && <span className="absolute bottom-1 left-1/2 flex -translate-x-1/2 gap-0.5">{marked.slice(0, 3).map((item, index) => <i key={`${item._id}-${index}`} className={`h-1 w-1 rounded-full ${item.category === 'exam' ? 'bg-rose-400' : item.category === 'holiday' ? 'bg-amber-300' : 'bg-[#00C49F]'}`} />)}</span>}
                   </button>
@@ -534,7 +540,7 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
               })}
             </div>
           </div>
-          <div className="rounded-2xl border border-[#133966] bg-[#040d1a] p-4">
+          <div className="rounded-xl sm:rounded-2xl border border-[#133966] bg-[#040d1a] p-3 sm:p-4">
             <h3 className="mb-3 text-sm font-bold text-white">{new Date(`${selectedDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
             {selectedEvents.length ? <div className="space-y-2">{selectedEvents.map(event => (
               <article key={event._id} className="rounded-xl border border-[#133966] bg-[#071b34] p-3">
@@ -552,7 +558,7 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
         </div>
 
         {isAdmin && (
-          <form onSubmit={submitEvent} className="grid gap-3 rounded-2xl border border-[#133966] bg-[#040d1a] p-4 sm:grid-cols-2 lg:grid-cols-6">
+          <form onSubmit={submitEvent} className="grid gap-3 rounded-xl sm:rounded-2xl border border-[#133966] bg-[#040d1a] p-3.5 sm:p-4 sm:grid-cols-2 lg:grid-cols-6">
             <input required maxLength={120} value={eventForm.title} onChange={e => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Event title" className="lg:col-span-2 rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white" />
             <label className="flex flex-col gap-1 text-[10px] font-bold text-slate-300">
               Event type
@@ -670,7 +676,7 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
         </section>
       </section>}
 
-      {!isCalendarPage && (isTeacher || user?.role === 'student' || (isAdmin && isAnnouncementPage)) && <section className="rounded-3xl border border-[#133966] bg-[#071b34]/95 p-5 sm:p-6 shadow-xl space-y-5">
+      {!isCalendarPage && (isTeacher || user?.role === 'student' || (isAdmin && isAnnouncementPage)) && <section className="rounded-2xl sm:rounded-3xl border border-[#133966] bg-[#071b34]/95 p-4 sm:p-6 shadow-xl space-y-4 sm:space-y-5">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-extrabold text-white">
             {isAnnouncementPage ? <Megaphone className="h-5 w-5 text-[#00C49F]" /> : <BookOpen className="h-5 w-5 text-[#00C49F]" />}
@@ -694,7 +700,7 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
           </label>
         )}
         {(isTeacher || (isAdmin && isAnnouncementPage)) && (
-          <form onSubmit={submitPost} className="grid gap-3 rounded-2xl border border-[#133966] bg-[#040d1a] p-4 md:grid-cols-2">
+          <form onSubmit={submitPost} className="grid gap-3 rounded-xl sm:rounded-2xl border border-[#133966] bg-[#040d1a] p-3.5 sm:p-4 md:grid-cols-2">
             <input required maxLength={160} value={postForm.title} onChange={e => setPostForm({ ...postForm, title: e.target.value })} placeholder="Title" className="rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white" />
             <select value={isAnnouncementPage ? 'announcement' : postForm.type} onChange={e => setPostForm({ ...postForm, type: e.target.value })} disabled={isAdmin || isAnnouncementPage} className="rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white disabled:opacity-70">
               {isAnnouncementPage
@@ -826,6 +832,43 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
             <button disabled={saving || (isTeacher && (!courses.length || !postForm.courseId))} className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] px-4 py-2 text-xs font-black text-[#040d1a] disabled:opacity-50"><Plus className="h-4 w-4" /> Publish</button>
           </form>
         )}
+        {isAnnouncementPage && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={() => setAnnouncementFilter('all')}
+              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                announcementFilter === 'all'
+                  ? 'bg-[#00a896] text-[#040d1a] shadow-md shadow-[#00a896]/20'
+                  : 'bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]'
+              }`}
+            >
+              All Announcements
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnouncementFilter('class')}
+              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                announcementFilter === 'class'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]'
+              }`}
+            >
+              Class Announcements
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnouncementFilter('institution')}
+              className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                announcementFilter === 'institution'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20'
+                  : 'bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]'
+              }`}
+            >
+              Institution Announcements
+            </button>
+          </div>
+        )}
         {loading ? <p className="py-6 text-center text-xs text-slate-400">Loading posts...</p> : visiblePosts.length ? (
           <div className="grid gap-3 md:grid-cols-2">
             {visiblePosts.map(post => (
@@ -838,7 +881,164 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
                 </div>
                 {post.body && <p className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{post.body}</p>}
                 {post.attachmentUrl && <a className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-[#67e8f9] underline" href={post.attachmentUrl} target="_blank" rel="noreferrer"><FileText className="h-3.5 w-3.5" /> Open attached material</a>}
-                {post.type === 'quiz' && <ol className="mt-3 space-y-3 text-xs text-slate-300">{post.questions?.map((question, index) => <li key={`${post._id}-${index}`}><p className="font-semibold">{index + 1}. {question.prompt}</p><div className="mt-1 space-y-1 pl-3 text-slate-400">{question.options?.map((option, optionIndex) => <p key={`${post._id}-${index}-${optionIndex}`}><span className="mr-2 font-bold text-[#00C49F]">{String.fromCharCode(65 + optionIndex)}.</span>{option}</p>)}</div></li>)}</ol>}
+                {post.type === 'announcement' && (
+                  <div className="mt-2.5">
+                    {post.course || post.authorRole === 'teacher' ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-0.5 text-[10px] font-bold text-blue-400 border border-blue-500/20">
+                        Class Announcement {post.course?.code ? `• ${post.course.code}` : ''} {post.course?.section ? `(Div ${post.course.section})` : ''}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-bold text-purple-400 border border-purple-500/20">
+                        Institution Announcement • Campus Administration
+                      </span>
+                    )}
+                  </div>
+                )}
+                {post.type === 'quiz' && (
+                  <div className="mt-3 space-y-4">
+                    {user?.role === 'student' && post.mySubmission ? (
+                      <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Award className="h-5 w-5 text-emerald-400" />
+                            <div>
+                              <p className="text-xs font-black text-emerald-300">Quiz Completed</p>
+                              <p className="text-[10px] text-emerald-400/80">Submitted on {new Date(post.mySubmission.submittedAt).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-base font-black text-white">{post.mySubmission.score} / {post.mySubmission.totalQuestions}</span>
+                            <span className="ml-1.5 text-xs font-bold text-emerald-400">({post.mySubmission.percentage}%)</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 divide-y divide-emerald-500/10 space-y-2 text-xs text-slate-300">
+                          {post.questions?.map((question, index) => {
+                            const studentAns = post.mySubmission.answers?.find(a => a.questionIndex === index);
+                            const isCorrect = studentAns?.isCorrect;
+                            return (
+                              <div key={`${post._id}-rev-${index}`} className="pt-2">
+                                <div className="flex items-start gap-2">
+                                  {isCorrect ? <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" /> : <XCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />}
+                                  <div>
+                                    <p className="font-semibold text-white">{index + 1}. {question.prompt}</p>
+                                    <p className="mt-0.5 text-[11px]">
+                                      Your answer: <span className={isCorrect ? "font-bold text-emerald-400" : "font-bold text-rose-400"}>{studentAns?.selectedOption || 'None'}</span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : user?.role === 'student' ? (
+                      <div className="space-y-3">
+                        {post.questions?.map((question, qIdx) => (
+                          <div key={`${post._id}-q-${qIdx}`} className="rounded-xl border border-[#133966]/60 bg-[#071b34]/40 p-3">
+                            <p className="text-xs font-bold text-white mb-2">{qIdx + 1}. {question.prompt}</p>
+                            <div className="space-y-1.5 pl-1">
+                              {question.options?.map((option, optIdx) => {
+                                const isSelected = quizAnswers[post._id]?.[qIdx] === option;
+                                return (
+                                  <label
+                                    key={`${post._id}-q-${qIdx}-opt-${optIdx}`}
+                                    onClick={() => handleSelectQuizOption(post._id, qIdx, option)}
+                                    className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${
+                                      isSelected
+                                        ? 'bg-[#00a896]/20 border border-[#00a896]/60 text-white font-medium'
+                                        : 'hover:bg-white/5 text-slate-300'
+                                    }`}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={`quiz-${post._id}-q-${qIdx}`}
+                                      checked={isSelected}
+                                      onChange={() => handleSelectQuizOption(post._id, qIdx, option)}
+                                      className="accent-[#00a896]"
+                                    />
+                                    <span className="font-bold text-[#00C49F]">{String.fromCharCode(65 + optIdx)}.</span>
+                                    <span>{option}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => handleQuizSubmit(post._id, post.questions)}
+                          disabled={submittingQuiz[post._id]}
+                          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] py-2 text-xs font-black text-[#040d1a] hover:opacity-90 transition-opacity disabled:opacity-50"
+                        >
+                          {submittingQuiz[post._id] ? 'Submitting...' : 'Submit Quiz Answers'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <ol className="space-y-2 text-xs text-slate-300">
+                          {post.questions?.map((question, index) => (
+                            <li key={`${post._id}-${index}`} className="rounded-lg bg-[#071b34]/50 p-2.5">
+                              <p className="font-semibold text-white">{index + 1}. {question.prompt}</p>
+                              <div className="mt-1 space-y-0.5 pl-3 text-slate-400">
+                                {question.options?.map((option, optionIndex) => (
+                                  <p key={`${post._id}-${index}-${optionIndex}`} className={option === question.correctAnswer ? "font-bold text-emerald-400" : ""}>
+                                    <span className="mr-2 text-[#00C49F]">{String.fromCharCode(65 + optionIndex)}.</span>{option}
+                                    {option === question.correctAnswer && " (Correct)"}
+                                  </p>
+                                ))}
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                        <div className="pt-2 border-t border-[#133966]/50">
+                          <button
+                            type="button"
+                            onClick={() => toggleQuizResults(post._id)}
+                            className="flex items-center gap-2 rounded-xl border border-[#00a896]/40 bg-[#00a896]/10 px-3 py-1.5 text-xs font-bold text-[#67e8f9] hover:bg-[#00a896]/20 transition-all"
+                          >
+                            <Users className="h-3.5 w-3.5" />
+                            {viewingResults[post._id] ? 'Hide Student Marks' : `View Student Marks (${post.submissionCount ?? 0})`}
+                          </button>
+                          {viewingResults[post._id] && (
+                            <div className="mt-3 rounded-xl border border-[#133966] bg-[#071b34] p-3 overflow-x-auto">
+                              {quizResultsData[post._id]?.loading ? (
+                                <p className="py-3 text-center text-xs text-slate-400">Loading student scores...</p>
+                              ) : quizResultsData[post._id]?.results?.length ? (
+                                <table className="w-full text-left text-xs text-slate-300 min-w-[360px]">
+                                  <thead className="border-b border-[#133966] text-[10px] uppercase text-slate-400">
+                                    <tr>
+                                      <th className="py-1.5 px-2">Student</th>
+                                      <th className="py-1.5 px-2">USN / ID</th>
+                                      <th className="py-1.5 px-2 text-center">Score</th>
+                                      <th className="py-1.5 px-2 text-center">Percentage</th>
+                                      <th className="py-1.5 px-2 text-right">Submitted</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[#133966]/40">
+                                    {quizResultsData[post._id].results.map(r => (
+                                      <tr key={r._id} className="hover:bg-white/5">
+                                        <td className="py-1.5 px-2 font-medium text-white">{r.studentName}</td>
+                                        <td className="py-1.5 px-2 font-mono text-slate-400">{r.studentUsn || '—'}</td>
+                                        <td className="py-1.5 px-2 text-center font-bold text-[#00C49F]">{r.score} / {r.totalQuestions}</td>
+                                        <td className="py-1.5 px-2 text-center font-bold">
+                                          <span className={r.percentage >= 75 ? 'text-emerald-400' : r.percentage >= 40 ? 'text-amber-400' : 'text-rose-400'}>
+                                            {r.percentage}%
+                                          </span>
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right text-[10px] text-slate-400">{new Date(r.submittedAt).toLocaleDateString()}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p className="py-3 text-center text-xs text-slate-400">No student submissions recorded yet.</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </article>
             ))}
           </div>

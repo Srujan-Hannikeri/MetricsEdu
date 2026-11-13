@@ -12,7 +12,7 @@ router.get('/posts', requireAuth, controller.getPosts);
 router.post('/blob-upload', requireAuth, async (req, res, next) => {
   try {
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      throw new Error('BLOB_READ_WRITE_TOKEN is required to upload files on Vercel.');
+      return res.status(200).json({ disabled: true, message: 'Vercel Blob token is not configured on this deployment.' });
     }
     const categories = {
       students: {
@@ -78,5 +78,14 @@ router.delete('/posts/:id', requireAuth, (req, res, next) => {
   }
   next();
 }, controller.deletePost);
+
+router.post('/posts/:id/quiz-submit', requireAuth, controller.submitQuiz);
+router.get('/posts/:id/quiz-results', requireAuth, controller.getQuizResults);
+router.post('/feedback', (req, res, next) => {
+  if (req.headers.authorization) {
+    return requireAuth(req, res, next);
+  }
+  next();
+}, controller.submitFeedback);
 
 module.exports = router;

@@ -11,6 +11,7 @@ const studentRoutes = require('./routes/studentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const semesterRoutes = require('./routes/semesterRoutes');
 const campusRoutes = require('./routes/campusRoutes');
+const devRoutes = require('./routes/devRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -70,6 +71,7 @@ app.use('/api/student', studentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/semesters', semesterRoutes);
 app.use('/api/campus', campusRoutes);
+app.use('/api/dev', devRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {

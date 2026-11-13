@@ -2,6 +2,8 @@ const AcademicEvent = require('../models/AcademicEvent');
 const LearningPost = require('../models/LearningPost');
 const Course = require('../models/Course');
 const User = require('../models/User');
+const QuizSubmission = require('../models/QuizSubmission');
+const BugFeedback = require('../models/BugFeedback');
 const { saveUploadedFile } = require('../services/uploadService');
 const {
   INSTITUTIONS,
@@ -64,7 +66,7 @@ exports.getEvents = async (req, res) => {
       institutionType: getInstitutionTypeFilter(req.user.institutionType || 'institute'),
       ...cohortEventFilter(req.user)
     };
-    const events = await AcademicEvent.find(filter).sort({ startDate: 1 }).limit(500);
+    const events = await AcademicEvent.find(filter).sort({ startDate: 1 }).limit(500).lean();
     return res.json({ success: true, events });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -159,13 +161,49 @@ exports.getPosts = async (req, res) => {
       .populate('course', 'code title section branch semester standard pucYear pucDept')
       .sort({ createdAt: -1 })
       .limit(250);
-    const visiblePosts = req.user.role === 'student'
-      ? posts.map(post => {
-          const item = post.toObject();
-          item.questions = item.questions.map(({ prompt, options }) => ({ prompt, options }));
+    let visiblePosts = posts.map(post => post.toObject());
+    const quizPostIds = posts.filter(post => post.type === 'quiz').map(post => post._id);
+
+    if (quizPostIds.length > 0) {
+      if (req.user.role === 'student') {
+        const submissions = await QuizSubmission.find({
+          post: { $in: quizPostIds },
+          student: req.user._id
+        }).lean();
+        const subMap = new Map(submissions.map(s => [s.post.toString(), s]));
+
+        visiblePosts = visiblePosts.map(item => {
+          if (item.type === 'quiz') {
+            const sub = subMap.get(item._id.toString());
+            if (sub) {
+              item.mySubmission = {
+                score: sub.score,
+                totalQuestions: sub.totalQuestions,
+                percentage: sub.percentage,
+                answers: sub.answers,
+                submittedAt: sub.submittedAt
+              };
+            } else {
+              item.questions = item.questions.map(({ prompt, options }) => ({ prompt, options }));
+            }
+          }
           return item;
-        })
-      : posts;
+        });
+      } else if (req.user.role === 'teacher' || req.user.role === 'admin') {
+        const counts = await QuizSubmission.aggregate([
+          { $match: { post: { $in: quizPostIds } } },
+          { $group: { _id: '$post', count: { $sum: 1 } } }
+        ]);
+        const countMap = new Map(counts.map(c => [c._id.toString(), c.count]));
+
+        visiblePosts = visiblePosts.map(item => {
+          if (item.type === 'quiz') {
+            item.submissionCount = countMap.get(item._id.toString()) || 0;
+          }
+          return item;
+        });
+      }
+    }
     return res.json({ success: true, posts: visiblePosts });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -238,6 +276,168 @@ exports.deletePost = async (req, res) => {
     const deleted = await LearningPost.findOneAndDelete(filter);
     if (!deleted) return res.status(404).json({ success: false, message: 'Post not found or access denied.' });
     return res.json({ success: true, message: 'Post deleted.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+exports.submitQuiz = async (req, res) => {
+  try {
+    if (req.user.role !== 'student') {
+      return res.status(403).json({ success: false, message: 'Only students can submit quiz answers.' });
+    }
+    const { id } = req.params;
+    const { answers } = req.body;
+
+    const post = await LearningPost.findById(id);
+    if (!post || post.type !== 'quiz') {
+      return res.status(404).json({ success: false, message: 'Quiz not found.' });
+    }
+
+    if (!Array.isArray(answers) || !answers.length) {
+      return res.status(400).json({ success: false, message: 'Answers are required.' });
+    }
+
+    let correctCount = 0;
+    const processedAnswers = post.questions.map((q, idx) => {
+      const studentAns = answers.find(a => a.questionIndex === idx);
+      const selectedOption = studentAns?.selectedOption || '';
+      const isCorrect = Boolean(selectedOption && selectedOption === q.correctAnswer);
+      if (isCorrect) correctCount++;
+      return {
+        questionIndex: idx,
+        selectedOption,
+        isCorrect
+      };
+    });
+
+    const totalQuestions = post.questions.length;
+    const percentage = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+
+    const studentUser = await User.findById(req.user._id).select('name usn email');
+
+    const submission = await QuizSubmission.findOneAndUpdate(
+      { post: post._id, student: req.user._id },
+      {
+        post: post._id,
+        student: req.user._id,
+        studentName: studentUser?.name || req.user.name,
+        studentUsn: studentUser?.usn || '',
+        studentEmail: studentUser?.email || req.user.email,
+        answers: processedAnswers,
+        score: correctCount,
+        totalQuestions,
+        percentage,
+        submittedAt: new Date()
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.json({
+      success: true,
+      message: `Quiz submitted successfully! You scored ${correctCount}/${totalQuestions} (${percentage}%).`,
+      submission: {
+        score: submission.score,
+        totalQuestions: submission.totalQuestions,
+        percentage: submission.percentage,
+        answers: submission.answers,
+        submittedAt: submission.submittedAt
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getQuizResults = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const post = await LearningPost.findById(id);
+    if (!post || post.type !== 'quiz') {
+      return res.status(404).json({ success: false, message: 'Quiz not found.' });
+    }
+
+    const adminId = getTenantAdminId(req.user);
+    const isAuthor = post.author.toString() === req.user._id.toString();
+    const isInstAdmin = req.user.role === 'admin' && post.adminId.toString() === adminId?.toString();
+
+    if (!isAuthor && !isInstAdmin) {
+      return res.status(403).json({ success: false, message: 'Access denied. Only the teacher or admin can view quiz results.' });
+    }
+
+    const results = await QuizSubmission.find({ post: id })
+      .sort({ score: -1, studentName: 1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      quiz: {
+        _id: post._id,
+        title: post.title,
+        totalQuestions: post.questions.length
+      },
+      results: results.map(r => ({
+        _id: r._id,
+        studentId: r.student,
+        studentName: r.studentName,
+        studentUsn: r.studentUsn,
+        studentEmail: r.studentEmail,
+        score: r.score,
+        totalQuestions: r.totalQuestions,
+        percentage: r.percentage,
+        submittedAt: r.submittedAt
+      }))
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.submitFeedback = async (req, res) => {
+  try {
+    const { type, title, description, severity, attachmentUrl, userName, userEmail } = req.body;
+    if (!title?.trim() || !description?.trim()) {
+      return res.status(400).json({ success: false, message: 'Title and description are required.' });
+    }
+
+    let userRole = 'anonymous';
+    let institutionName = 'Unspecified';
+    let institutionType = '';
+    let resolvedUserName = userName || 'Anonymous';
+    let resolvedUserEmail = userEmail || '';
+
+    if (req.user) {
+      userRole = req.user.role;
+      resolvedUserName = req.user.name || resolvedUserName;
+      resolvedUserEmail = req.user.email || resolvedUserEmail;
+      institutionType = req.user.institutionType || '';
+      institutionName = req.user.institutionName || '';
+      if (!institutionName && req.user.createdByAdmin) {
+        const owner = await User.findById(req.user.createdByAdmin).select('name institutionName');
+        institutionName = owner?.institutionName || owner?.name || '';
+      }
+    }
+
+    const item = await BugFeedback.create({
+      userId: req.user?._id || null,
+      userName: resolvedUserName,
+      userEmail: resolvedUserEmail,
+      userRole,
+      institutionName: institutionName || 'MetricsEdu Institution',
+      institutionType,
+      type: ['bug', 'feedback', 'feature'].includes(type) ? type : 'bug',
+      title: title.trim(),
+      description: description.trim(),
+      severity: ['low', 'medium', 'high', 'critical'].includes(severity) ? severity : 'medium',
+      attachmentUrl: attachmentUrl || ''
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Feedback submitted successfully! Our developer team has received your report.',
+      reportId: item._id
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

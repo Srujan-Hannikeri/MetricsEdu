@@ -159,55 +159,55 @@ export default function StudentDashboard({ user, onUserUpdated }) {
   const shouldShowUploader = !isPhotoPresent || isConfidenceBelow40 || showManualUploader;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-8">
       
       {/* Student Profile Card (Logo Brand Colors) */}
-      <div className="bg-gradient-to-r from-[#071b34] via-[#0b2444] to-[#071b34] border border-[#133966] rounded-3xl p-6 sm:p-8 shadow-xl backdrop-blur-md relative overflow-hidden">
+      <div className="bg-gradient-to-r from-[#071b34] via-[#0b2444] to-[#071b34] border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl backdrop-blur-md relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#00a896]/10 rounded-full blur-3xl -z-10" />
 
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-          <div className="flex items-center gap-4 sm:gap-6">
-            <div className="relative">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6">
+          <div className="flex items-center gap-3.5 sm:gap-6 min-w-0">
+            <div className="relative shrink-0">
               {/* Real Student Avatar / Portrait */}
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-2 border-[#00C49F] p-0.5 shadow-lg bg-[#040d1a]">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl sm:rounded-2xl overflow-hidden border-2 border-[#00C49F] p-0.5 shadow-lg bg-[#040d1a]">
                 {user?.profileImage ? (
                   <img 
                     src={user.profileImage} 
                     alt={user.name} 
-                    className="w-full h-full object-cover rounded-[14px]"
+                    className="w-full h-full object-cover rounded-[10px] sm:rounded-[14px]"
                     onError={(e) => {
                       e.target.onerror = null;
                       e.target.src = '/logo.jpg';
                     }}
                   />
                 ) : (
-                  <div className="w-full h-full bg-[#040d1a] rounded-[14px] flex items-center justify-center font-black text-2xl text-[#00C49F]">
+                  <div className="w-full h-full bg-[#040d1a] rounded-[10px] sm:rounded-[14px] flex items-center justify-center font-black text-xl sm:text-2xl text-[#00C49F]">
                     {user?.name?.charAt(0) || 'S'}
                   </div>
                 )}
               </div>
               {user?.faceRegistered && (
-                <span className="absolute -bottom-1 -right-1 p-1 bg-[#00C49F] text-[#040d1a] rounded-full shadow-md" title="Face Profile Active">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+                <span className="absolute -bottom-1 -right-1 p-0.5 sm:p-1 bg-[#00C49F] text-[#040d1a] rounded-full shadow-md" title="Face Profile Active">
+                  <CheckCircle2 className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
                 </span>
               )}
             </div>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase font-mono">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <span className="text-[9px] sm:text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase font-mono">
                   {user?.institutionType === 'school' ? 'SCHOOL STUDENT' : 'COLLEGE STUDENT'}
                 </span>
-                <span className="text-xs text-cyan-200 font-mono">
+                <span className="text-[11px] sm:text-xs text-cyan-200 font-mono">
                   {user?.institutionType === 'school'
                     ? `Standard: ${user?.standard || '10th Std'} • Div ${user?.division || user?.section || 'A'}`
                     : `Division ${user?.division || user?.section || 'C'} • Semester ${user?.semester || 5}`}
                 </span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-black text-white mt-1">
+              <h1 className="text-lg sm:text-2xl font-black text-white mt-1 truncate">
                 {user?.name}
               </h1>
-              <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-slate-300 font-mono">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-1 text-[11px] sm:text-xs text-slate-300 font-mono">
                 <span>{user?.institutionType === 'school' ? 'Roll No / ID:' : 'USN:'} <strong className="text-[#38bdf8] font-bold">{user?.usn}</strong></span>
                 <span>•</span>
                 <span>{user?.institutionType === 'school' ? (user?.standard || '10th Standard') : (user?.department || 'Computer Science & Engineering')}</span>
@@ -215,7 +215,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
                   <>
                     <span>•</span>
                     <span className="text-[#00C49F] font-semibold bg-[#00a896]/15 px-2 py-0.5 rounded-md border border-[#00a896]/30">
-                      Parent Email: {user.parentsEmail}
+                      Parent: {user.parentsEmail}
                     </span>
                   </>
                 )}
@@ -224,7 +224,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
           </div>
 
           {/* Biometric Status Summary Pill */}
-          <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center border-t sm:border-t-0 border-[#133966] pt-4 sm:pt-0">
+          <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center border-t sm:border-t-0 border-[#133966] pt-3 sm:pt-0">
             <div className="text-xs text-slate-300 font-medium">Biometric Recognition</div>
             <div className="mt-1 flex items-center gap-2">
               {isConfidenceBelow40 ? (
@@ -248,68 +248,70 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         </div>
       </div>
 
-      {/* Student navigation */}
-      <div className="flex flex-wrap bg-[#071b34] p-1.5 rounded-2xl border border-[#133966] shadow-md self-start gap-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab('attendance')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'attendance'
-              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          My Attendance & Subjects
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('timetable')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'timetable'
-              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          Weekly Class Timetable Matrix
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('calendar')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'calendar'
-              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          Academic Calendar
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('announcements')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'announcements'
-              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Megaphone className="w-4 h-4" />
-          Announcements
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('materials')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeTab === 'materials'
-              ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          Study Materials
-        </button>
+      {/* Student navigation (Horizontally Scrollable on Mobile) */}
+      <div className="w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
+        <div className="flex w-max min-w-full items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab('attendance')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'attendance'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            My Attendance &amp; Subjects
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('timetable')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'timetable'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            Weekly Timetable
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('calendar')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'calendar'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            Academic Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('announcements')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'announcements'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Megaphone className="w-4 h-4" />
+            Announcements
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('materials')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'materials'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Study Materials
+          </button>
+        </div>
       </div>
 
       {/* TAB 1: ATTENDANCE & SUBJECT DETAILS */}
@@ -518,7 +520,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
       )}
 
       {/* Subject-wise Attendance Breakdown */}
-      <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm">
+      <div className="bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl backdrop-blur-sm">
         <div className="flex items-center gap-2 mb-4">
           <BookOpen className="w-4 h-4 text-[#00C49F]" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-200">
@@ -527,37 +529,37 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         </div>
 
         {metrics?.subjects?.length > 0 ? (
-          <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-            <table className="w-full text-left text-xs text-slate-300">
+          <div className="overflow-x-auto no-scrollbar rounded-xl sm:rounded-2xl border border-[#133966] touch-scroll">
+            <table className="w-full text-left text-xs text-slate-300 min-w-[540px]">
               <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
                 <tr>
-                  <th className="py-3 px-4">Subject</th>
-                  <th className="py-3 px-4">Lecturer</th>
-                  <th className="py-3 px-4">Classes Held</th>
-                  <th className="py-3 px-4">Attended (Present)</th>
-                  <th className="py-3 px-4">Percentage</th>
-                  <th className="py-3 px-4 text-center">Eligibility</th>
+                  <th className="py-3 px-3.5">Subject</th>
+                  <th className="py-3 px-3.5">Lecturer</th>
+                  <th className="py-3 px-3.5">Classes Held</th>
+                  <th className="py-3 px-3.5">Attended (Present)</th>
+                  <th className="py-3 px-3.5">Percentage</th>
+                  <th className="py-3 px-3.5 text-center">Eligibility</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#133966]/60 font-medium">
                 {metrics.subjects.map((sub) => (
                   <tr key={sub.courseId} className="hover:bg-[#0b2444]/40 transition-colors">
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5">
                       <div className="font-bold text-white text-sm">{sub.code}</div>
                       <div className="text-[10px] text-slate-300">{sub.title}</div>
                     </td>
-                    <td className="py-3.5 px-4 text-slate-300">
+                    <td className="py-3 px-3.5 text-slate-300">
                       {sub.teacher}
                     </td>
-                    <td className="py-3.5 px-4 font-mono">
+                    <td className="py-3 px-3.5 font-mono">
                       {sub.totalHeld}
                     </td>
-                    <td className="py-3.5 px-4 font-mono text-[#00C49F] font-bold">
+                    <td className="py-3 px-3.5 font-mono text-[#00C49F] font-bold">
                       {sub.totalAttended}
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5">
                       <div className="flex items-center gap-2">
-                        <div className="w-20 bg-[#040d1a] h-2 rounded-full overflow-hidden border border-[#133966]">
+                        <div className="w-16 sm:w-20 bg-[#040d1a] h-2 rounded-full overflow-hidden border border-[#133966]">
                           <div
                             className={`h-full ${sub.percentage >= 75 ? 'bg-[#00C49F]' : 'bg-rose-500'}`}
                             style={{ width: `${sub.percentage}%` }}
@@ -568,13 +570,13 @@ export default function StudentDashboard({ user, onUserUpdated }) {
                         </span>
                       </div>
                     </td>
-                    <td className="py-3.5 px-4 text-center">
+                    <td className="py-3 px-3.5 text-center">
                       {sub.percentage >= 75 ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase font-mono">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase font-mono">
                           Eligible
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 uppercase font-mono">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30 uppercase font-mono">
                           Shortage
                         </span>
                       )}
@@ -592,7 +594,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
       </div>
 
       {/* Recent Daily Lecture Logs */}
-      <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl backdrop-blur-sm">
+      <div className="bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl backdrop-blur-sm">
         <div className="flex items-center gap-2 mb-4">
           <Clock className="w-4 h-4 text-[#00C49F]" />
           <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-200">
@@ -601,38 +603,38 @@ export default function StudentDashboard({ user, onUserUpdated }) {
         </div>
 
         {metrics?.recentLogs?.length > 0 ? (
-          <div className="overflow-x-auto rounded-2xl border border-[#133966]">
-            <table className="w-full text-left text-xs text-slate-300">
+          <div className="overflow-x-auto no-scrollbar rounded-xl sm:rounded-2xl border border-[#133966] touch-scroll">
+            <table className="w-full text-left text-xs text-slate-300 min-w-[540px]">
               <thead className="bg-[#040d1a] text-cyan-300 font-bold uppercase tracking-wider text-[10px] border-b border-[#133966]">
                 <tr>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Subject</th>
-                  <th className="py-3 px-4">Lecturer</th>
-                  <th className="py-3 px-4">Classroom</th>
-                  <th className="py-3 px-4 text-center">Status (Present / Absent)</th>
+                  <th className="py-3 px-3.5">Date</th>
+                  <th className="py-3 px-3.5">Subject</th>
+                  <th className="py-3 px-3.5">Lecturer</th>
+                  <th className="py-3 px-3.5">Classroom</th>
+                  <th className="py-3 px-3.5 text-center">Status (Present / Absent)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#133966]/60 font-medium">
                 {metrics.recentLogs.map((log) => (
                   <tr key={log.sessionId} className="hover:bg-[#0b2444]/40 transition-colors">
-                    <td className="py-3 px-4 font-mono text-white">
+                    <td className="py-3 px-3.5 font-mono text-white whitespace-nowrap">
                       {new Date(log.date).toLocaleDateString(undefined, {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric'
                       })}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-3.5">
                       <div className="font-bold text-white">{log.courseCode}</div>
                       <div className="text-[10px] text-slate-300">{log.courseTitle}</div>
                     </td>
-                    <td className="py-3 px-4 text-slate-300">
+                    <td className="py-3 px-3.5 text-slate-300">
                       {log.teacherName}
                     </td>
-                    <td className="py-3 px-4 font-mono text-cyan-200">
+                    <td className="py-3 px-3.5 font-mono text-cyan-200">
                       {log.classroom}
                     </td>
-                    <td className="py-3 px-4 text-center">
+                    <td className="py-3 px-3.5 text-center whitespace-nowrap">
                       {log.status === 'Present' ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40">
                           ✓ Present ({log.confidence}%)

@@ -309,7 +309,7 @@ export default function TeacherDashboard({ user }) {
   );
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
 
       {/* Header */}
       <div>
@@ -318,10 +318,10 @@ export default function TeacherDashboard({ user }) {
             <span className="p-1 px-2.5 rounded-lg bg-[#00a896]/15 text-[#00C49F] font-mono text-xs font-bold border border-[#00a896]/30">FACULTY PORTAL</span>
             <span className="text-xs text-slate-400 font-mono">ID: {user?.teacherId}</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">Welcome, {user?.name}</h1>
+          <h1 className="text-xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">Welcome, {user?.name}</h1>
           <p className="text-xs sm:text-sm text-cyan-200/70 font-medium">Smart Classroom Attendance · Timetable · Session Reports</p>
         </div>
-        <div className="mt-4 w-full overflow-x-auto rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md">
+        <div className="mt-4 w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
           <div className="flex w-max min-w-full items-center gap-1">
           {[
             { id: 'my-classes', label: 'My Assigned Classes', icon: BookOpen },
@@ -673,14 +673,14 @@ export default function TeacherDashboard({ user }) {
 
           {/* Attendance roster */}
           {students.length > 0 && (
-            <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 shadow-xl">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div className="bg-[#071b34]/95 border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 mb-4">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-[#00C49F]" />
                   <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-200">4. Attendance Roster</h2>
                 </div>
-                <div className="flex items-center gap-3 bg-[#040d1a] px-4 py-2.5 rounded-2xl border border-[#133966]">
-                  <div className="text-right">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 sm:gap-3 bg-[#040d1a] p-3 sm:px-4 sm:py-2.5 rounded-2xl border border-[#133966]">
+                  <div className="flex sm:flex-col items-center justify-between sm:items-end text-left sm:text-right gap-2 sm:gap-0">
                     <div className="text-xs font-bold text-white">
                       <span className="text-[#00C49F]">{presentCount} Present</span> · <span className="text-rose-400">{students.length - presentCount} Absent</span>
                     </div>
@@ -689,7 +689,7 @@ export default function TeacherDashboard({ user }) {
                     </div>
                   </div>
                   <button onClick={handleSaveAttendance} disabled={savingAttendance || !isWindowOpen}
-                    className={`px-4 py-2 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-1.5 ${isWindowOpen
+                    className={`w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-black uppercase transition-all flex items-center justify-center gap-1.5 ${isWindowOpen
                       ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md hover:opacity-95'
                       : 'bg-[#133966] text-slate-500 cursor-not-allowed'} disabled:opacity-50`}>
                     {savingAttendance ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving...</> : <><ShieldCheck className="w-3.5 h-3.5" /> Save Attendance</>}

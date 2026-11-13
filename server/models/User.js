@@ -50,6 +50,11 @@ const userSchema = new mongoose.Schema({
     enum: ['institute', 'school', 'pu_college', 'diploma', 'college'],
     default: 'institute'
   },
+  institutionName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   createdByAdmin: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

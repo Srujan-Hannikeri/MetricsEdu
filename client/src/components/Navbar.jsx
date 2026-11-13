@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ShieldCheck, GraduationCap, School, LogOut, Sparkles, UserCheck, 
-  X, Mail, User, BookOpen, CheckCircle2, ChevronRight, Clock
+  X, Mail, User, BookOpen, CheckCircle2, ChevronRight, Clock, Bug
 } from 'lucide-react';
 
 // Live clock hook
@@ -15,7 +15,7 @@ function useLiveClock() {
   return time;
 }
 
-export default function Navbar({ user, onLogout }) {
+export default function Navbar({ user, onLogout, onOpenFeedback }) {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const now = useLiveClock();
 
@@ -64,33 +64,33 @@ export default function Navbar({ user, onLogout }) {
 
   return (
     <header className="sticky top-0 z-40 w-full bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] shadow-xl">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto min-w-0 px-3 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-2">
         
         {/* Brand & High-Definition Logo */}
-        <div className="flex items-center gap-3.5">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
           <div className="relative group shrink-0">
             {/* Crisp High-Res Logo Container */}
-            <div className="h-14 w-auto rounded-xl bg-[#071b34] border border-[#133966] p-1 flex items-center justify-center shadow-lg hover:border-[#00C49F] transition-colors">
+            <div className="h-10 w-10 sm:h-14 sm:w-auto rounded-xl bg-[#071b34] border border-[#133966] p-1 flex items-center justify-center shadow-lg hover:border-[#00C49F] transition-colors">
               <img
                 src="/logo.jpg"
                 alt="MetricsEdu Logo"
-                className="h-12 w-auto object-contain rounded-lg"
+                className="h-8 w-8 sm:h-12 sm:w-auto object-contain rounded-lg"
                 style={{ imageRendering: '-webkit-optimize-contrast' }}
               />
             </div>
             <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#00C49F] border-2 border-[#040d1a] rounded-full" />
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-2xl font-black tracking-tight text-white">
+              <span className="whitespace-nowrap text-lg sm:text-2xl font-black tracking-tight text-white">
                 Metrics<span className="text-[#00C49F]">Edu</span>
               </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase tracking-wider">
+              <span className="hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase tracking-wider">
                 Vision AI
               </span>
             </div>
-            <p className="text-xs text-cyan-200/80 font-medium tracking-wide">
+            <p className="hidden sm:block truncate text-xs text-cyan-200/80 font-medium tracking-wide">
               One Connected Platform. One Smart Classroom.
             </p>
           </div>
@@ -98,7 +98,7 @@ export default function Navbar({ user, onLogout }) {
 
         {/* User Status / Role / Interactive Profile Pill */}
         {user ? (
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             {/* Live Clock */}
             <div className="hidden sm:flex flex-col items-end px-3 py-1.5 rounded-xl bg-[#071b34] border border-[#133966]">
               <div className="text-sm font-black font-mono text-[#00C49F] tracking-widest leading-none">
@@ -110,13 +110,32 @@ export default function Navbar({ user, onLogout }) {
             <button
               type="button"
               onClick={() => setShowProfileModal(true)}
-              className="flex items-center gap-2.5 px-3.5 py-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] transition-all group shadow-sm text-left"
+              aria-label="Open profile and sign out"
+              className="flex shrink-0 items-center gap-2 sm:gap-2.5 p-1.5 sm:px-3.5 sm:py-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] transition-all group shadow-sm text-left"
               title="Click to view profile & sign out"
             >
-              <div className={`p-1.5 rounded-lg border ${badge.color} group-hover:scale-105 transition-transform`}>
-                <IconComponent className="w-4 h-4" />
+              {user.profileImage ? (
+                <div className="w-7 h-7 sm:w-6 sm:h-6 rounded-lg overflow-hidden border border-[#00C49F] shrink-0 bg-[#040d1a]">
+                  <img
+                    src={user.profileImage}
+                    alt={user.name}
+                    className="w-full h-full object-cover"
+                    onError={(e) => { e.target.src = '/logo.jpg'; }}
+                  />
+                </div>
+              ) : (
+                <div className={`p-1.5 rounded-lg border ${badge.color} group-hover:scale-105 transition-transform`}>
+                  <IconComponent className="w-4 h-4" />
+                </div>
+              )}
+              {/* Mobile name tag */}
+              <div className="block sm:hidden leading-tight pr-0.5">
+                <span className="text-[11px] font-bold text-white block truncate max-w-[65px]">{user.name?.split(' ')[0]}</span>
+                <span className={`text-[9px] font-mono px-1 py-0 rounded border ${badge.color} block text-center truncate`}>
+                  {badge.label.split(' ')[0]}
+                </span>
               </div>
-              <div className="leading-tight">
+              <div className="hidden sm:block leading-tight">
                 <div className="font-bold text-white flex items-center gap-1.5 text-xs">
                   <span className="group-hover:text-[#00C49F] transition-colors">{user.name}</span>
                   <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.color}`}>
@@ -132,7 +151,7 @@ export default function Navbar({ user, onLogout }) {
             </button>
           </div>
         ) : (
-          <div className="text-xs text-cyan-200/70 font-mono">
+          <div className="shrink-0 text-[10px] sm:text-xs text-cyan-200/70 font-mono">
             Secured by JWT
           </div>
         )}
@@ -147,12 +166,12 @@ export default function Navbar({ user, onLogout }) {
           }}
           className="fixed inset-0 z-[9999] bg-[#040d1a]/85 backdrop-blur-md overflow-y-auto flex items-center justify-center p-4 sm:p-6"
         >
-          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-3xl p-6 shadow-2xl relative text-white animate-in fade-in zoom-in-95 duration-200 my-auto">
+          <div className="w-full max-w-md bg-[#071b34] border border-[#133966] rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl relative text-white animate-in fade-in zoom-in-95 duration-200 my-auto max-h-[92vh] overflow-y-auto">
             
             {/* Close Button */}
             <button
               onClick={() => setShowProfileModal(false)}
-              className="absolute top-5 right-5 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-[#0b2444] transition-colors"
+              className="absolute top-4 right-4 sm:top-5 sm:right-5 p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-[#0b2444] transition-colors"
               title="Close Profile"
             >
               <X className="w-5 h-5" />
@@ -244,11 +263,19 @@ export default function Navbar({ user, onLogout }) {
               )}
             </div>
 
-            {/* Modal Actions: Sign Out inside profile page */}
-            <div className="pt-4 border-t border-[#133966] flex items-center justify-between gap-3">
-              <span className="text-[11px] text-slate-500 font-mono">
-                MetricsEdu Platform
-              </span>
+            {/* Modal Actions */}
+            <div className="pt-4 border-t border-[#133966] flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfileModal(false);
+                  if (onOpenFeedback) onOpenFeedback();
+                }}
+                className="px-3 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-bold transition-all flex items-center gap-1.5"
+              >
+                <Bug className="w-3.5 h-3.5 text-blue-400" />
+                Report Bug / Feedback
+              </button>
               <button
                 type="button"
                 onClick={() => {

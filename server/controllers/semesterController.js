@@ -53,7 +53,8 @@ exports.getSemesters = async (req, res) => {
 
     const sems = await Semester.find(filter)
       .populate('subjects.teacher', 'name teacherId email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     return res.json({ success: true, semesters: sems });
   } catch (err) {
