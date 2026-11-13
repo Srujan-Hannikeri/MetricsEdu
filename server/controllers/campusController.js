@@ -3,6 +3,7 @@ const LearningPost = require('../models/LearningPost');
 const Course = require('../models/Course');
 const User = require('../models/User');
 const QuizSubmission = require('../models/QuizSubmission');
+const StudentMark = require('../models/StudentMark');
 const BugFeedback = require('../models/BugFeedback');
 const { saveUploadedFile } = require('../services/uploadService');
 const {
@@ -333,6 +334,59 @@ exports.submitQuiz = async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // Automatically record quiz marks into StudentMark for analytics and faculty gradebook
+    try {
+      let courseObj = null;
+      if (post.course) {
+        courseObj = await Course.findById(post.course).select('code title teacher');
+      }
+
+      const fullStudent = await User.findById(req.user._id).select('name usn division semester branch standard pucYear pucDept institutionType createdByAdmin');
+      const teacherUser = post.author ? await User.findById(post.author).select('name') : null;
+
+      const { grade } = StudentMark.calculateGrade(correctCount, totalQuestions, 'Present');
+
+      await StudentMark.findOneAndUpdate(
+        {
+          student: req.user._id,
+          course: post.course || null,
+          assessmentName: `Quiz: ${post.title}`
+        },
+        {
+          $set: {
+            adminId: post.adminId || fullStudent?.createdByAdmin,
+            institutionType: post.institutionType || fullStudent?.institutionType || 'institute',
+            course: post.course || null,
+            courseCode: courseObj?.code || 'QUIZ',
+            courseTitle: courseObj?.title || post.title,
+            teacher: post.author || courseObj?.teacher || req.user._id,
+            teacherName: teacherUser?.name || 'Faculty Quiz',
+            student: req.user._id,
+            studentName: fullStudent?.name || req.user.name,
+            studentUsn: fullStudent?.usn || '',
+            division: (fullStudent?.division || 'A').toUpperCase(),
+            semester: fullStudent?.semester || null,
+            branch: fullStudent?.branch || '',
+            standard: fullStudent?.standard || '',
+            pucYear: fullStudent?.pucYear || '',
+            pucDept: fullStudent?.pucDept || '',
+            assessmentName: `Quiz: ${post.title}`,
+            assessmentType: 'quiz',
+            score: correctCount,
+            maxScore: totalQuestions,
+            percentage,
+            grade,
+            status: 'Present',
+            remarks: `Automatically uploaded from online quiz (${correctCount}/${totalQuestions} correct)`,
+            examDate: new Date()
+          }
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    } catch (markErr) {
+      console.error('Error automatically uploading quiz marks to StudentMark:', markErr);
+    }
 
     return res.json({
       success: true,

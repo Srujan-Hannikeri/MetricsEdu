@@ -29,7 +29,7 @@ export async function request(endpoint, options = {}) {
   const token = getToken();
   const headers = { ...options.headers };
 
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (!headers['Authorization'] && token) headers['Authorization'] = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
@@ -46,6 +46,7 @@ export async function request(endpoint, options = {}) {
 }
 
 export const api = {
+  uploadBlob,
   // ─── Auth ──────────────────────────────────────────────────────────────────
   register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
   login: (identifier, password, role) => request('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, role }) }),
@@ -170,12 +171,42 @@ export const api = {
 
   // ─── Developer Portal ─────────────────────────────────────────────────────
   devLogin: (accessKey) => request('/dev/auth', { method: 'POST', body: JSON.stringify({ accessKey }) }),
-  getDevMetrics: (token) => request('/dev/metrics', { headers: { Authorization: `Bearer ${token}` } }),
-  generateDevIds: (token, payload) => request('/dev/generate-ids', { method: 'POST', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}` } }),
+  getDevMetrics: (token) => request('/dev/metrics', { headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  createDevInstitution: (token, payload) => request('/dev/institutions', { method: 'POST', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  generateDevIds: (token, payload) => request('/dev/generate-ids', { method: 'POST', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
   getDevBugs: (token, params = {}) => {
     const q = new URLSearchParams(params).toString();
-    return request(`/dev/bugs${q ? '?' + q : ''}`, { headers: { Authorization: `Bearer ${token}` } });
+    return request(`/dev/bugs${q ? '?' + q : ''}`, { headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } });
   },
-  updateDevBugStatus: (token, bugId, payload) => request(`/dev/bugs/${bugId}`, { method: 'PATCH', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}` } }),
-  deleteDevBug: (token, bugId) => request(`/dev/bugs/${bugId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+  updateDevBugStatus: (token, bugId, payload) => request(`/dev/bugs/${bugId}`, { method: 'PATCH', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  deleteDevBug: (token, bugId) => request(`/dev/bugs/${bugId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  getDevKeys: (token) => request('/dev/keys', { headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  createDevKey: (token, payload) => request('/dev/keys', { method: 'POST', body: JSON.stringify(payload), headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  toggleDevKey: (token, keyId) => request(`/dev/keys/${keyId}/toggle`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+  deleteDevKey: (token, keyId) => request(`/dev/keys/${keyId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}`, 'x-dev-key': token } }),
+
+  // ─── Student Marks & Analytics ────────────────────────────────────────────
+  getMarksCourses: () => request('/marks/teacher-courses'),
+  getMarksRoster: (paramsObj = {}) => {
+    const params = new URLSearchParams();
+    if (paramsObj.courseId) params.append('courseId', paramsObj.courseId);
+    if (paramsObj.division) params.append('division', paramsObj.division);
+    if (paramsObj.assessmentName) params.append('assessmentName', paramsObj.assessmentName);
+    return request(`/marks/roster?${params.toString()}`);
+  },
+  batchSaveMarks: (data) => request('/marks/batch-save', { method: 'POST', body: JSON.stringify(data) }),
+  getMarksOverview: (paramsObj = {}) => {
+    const params = new URLSearchParams();
+    if (paramsObj.courseId) params.append('courseId', paramsObj.courseId);
+    if (paramsObj.division) params.append('division', paramsObj.division);
+    if (paramsObj.semester) params.append('semester', paramsObj.semester);
+    if (paramsObj.branch) params.append('branch', paramsObj.branch);
+    if (paramsObj.standard) params.append('standard', paramsObj.standard);
+    if (paramsObj.pucYear) params.append('pucYear', paramsObj.pucYear);
+    if (paramsObj.pucDept) params.append('pucDept', paramsObj.pucDept);
+    if (paramsObj.assessmentName) params.append('assessmentName', paramsObj.assessmentName);
+    if (paramsObj.search) params.append('search', paramsObj.search);
+    return request(`/marks/overview?${params.toString()}`);
+  },
+  getStudentMarksHistory: (studentId) => request(`/marks/student/${studentId}`)
 };

@@ -456,9 +456,77 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
       setError(deleteError.message);
     }
   };
+  const handleSelectQuizOption = (postId, qIndex, option) => {
+    setQuizAnswers(prev => ({
+      ...prev,
+      [postId]: {
+        ...(prev[postId] || {}),
+        [qIndex]: option
+      }
+    }));
+  };
+
+  const handleQuizSubmit = async (postId, questions) => {
+    const postAnswers = quizAnswers[postId] || {};
+    const formatted = questions.map((_, idx) => ({
+      questionIndex: idx,
+      selectedOption: postAnswers[idx] || ''
+    }));
+
+    if (formatted.some(a => !a.selectedOption)) {
+      alert('Please select an answer for all questions before submitting.');
+      return;
+    }
+
+    setSubmittingQuiz(prev => ({ ...prev, [postId]: true }));
+    try {
+      const res = await api.submitQuiz(postId, formatted);
+      setPosts(prev => prev.map(p => {
+        if (p._id === postId) {
+          return {
+            ...p,
+            mySubmission: res.submission
+          };
+        }
+        return p;
+      }));
+    } catch (err) {
+      alert(err.message || 'Failed to submit quiz.');
+    } finally {
+      setSubmittingQuiz(prev => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  const toggleQuizResults = async (postId) => {
+    if (viewingResults[postId]) {
+      setViewingResults(prev => ({ ...prev, [postId]: false }));
+      return;
+    }
+    setViewingResults(prev => ({ ...prev, [postId]: true }));
+    setQuizResultsData(prev => ({ ...prev, [postId]: { loading: true, results: [] } }));
+    try {
+      const res = await api.getQuizResults(postId);
+      setQuizResultsData(prev => ({
+        ...prev,
+        [postId]: { loading: false, results: res.results || [] }
+      }));
+    } catch (err) {
+      alert(err.message || 'Failed to load student marks.');
+      setQuizResultsData(prev => ({ ...prev, [postId]: { loading: false, results: [] } }));
+    }
+  };
+
   const visiblePosts = posts.filter(post =>
     isAnnouncementPage ? post.type === 'announcement' : post.type === 'material' || post.type === 'quiz'
-  ).filter(post => selectedSubjectId === 'all' || post.course?._id === selectedSubjectId);
+  ).filter(post => {
+    if (selectedSubjectId !== 'all' && post.course?._id !== selectedSubjectId) return false;
+    if (isAnnouncementPage && announcementFilter !== 'all') {
+      const isClass = Boolean(post.course || post.authorRole === 'teacher');
+      if (announcementFilter === 'class' && !isClass) return false;
+      if (announcementFilter === 'institution' && isClass) return false;
+    }
+    return true;
+  });
   const materialSubjects = [...new Map(
     posts.filter(post => post.type === 'material' || post.type === 'quiz')
       .filter(post => post.course?._id)
@@ -489,6 +557,15 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
       ? 0
       : question.correctAnswerIndex > optionIndex ? question.correctAnswerIndex - 1 : question.correctAnswerIndex;
     updateQuestion(questionIndex, { options, correctAnswerIndex });
+  };
+
+  const removeQuestion = (questionIndex) => {
+    setPostForm(previous => ({
+      ...previous,
+      questions: previous.questions.length > 1
+        ? previous.questions.filter((_, index) => index !== questionIndex)
+        : previous.questions
+    }));
   };
 
   return (
@@ -715,7 +792,18 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
               <div className="md:col-span-2 space-y-4">
                 {postForm.questions.map((question, questionIndex) => (
                   <fieldset key={questionIndex} className="rounded-2xl border border-[#133966] bg-[#071b34] p-4">
-                    <legend className="px-2 text-xs font-extrabold text-[#00C49F]">Question {questionIndex + 1}</legend>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-extrabold text-[#00C49F]">Question {questionIndex + 1}</span>
+                      {postForm.questions.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeQuestion(questionIndex)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/20 transition-colors"
+                        >
+                          <Trash2 className="h-3 w-3" /> Remove question
+                        </button>
+                      )}
+                    </div>
                     <label className="mb-3 block text-[11px] font-bold text-slate-300">
                       Question
                       <textarea
@@ -942,22 +1030,22 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
                                 return (
                                   <label
                                     key={`${post._id}-q-${qIdx}-opt-${optIdx}`}
-                                    onClick={() => handleSelectQuizOption(post._id, qIdx, option)}
                                     className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${
                                       isSelected
                                         ? 'bg-[#00a896]/20 border border-[#00a896]/60 text-white font-medium'
-                                        : 'hover:bg-white/5 text-slate-300'
+                                        : 'hover:bg-white/5 text-slate-300 border border-transparent'
                                     }`}
                                   >
                                     <input
                                       type="radio"
                                       name={`quiz-${post._id}-q-${qIdx}`}
-                                      checked={isSelected}
+                                      value={option}
+                                      checked={Boolean(isSelected)}
                                       onChange={() => handleSelectQuizOption(post._id, qIdx, option)}
-                                      className="accent-[#00a896]"
+                                      className="accent-[#00a896] h-4 w-4 cursor-pointer shrink-0"
                                     />
-                                    <span className="font-bold text-[#00C49F]">{String.fromCharCode(65 + optIdx)}.</span>
-                                    <span>{option}</span>
+                                    <span className="font-bold text-[#00C49F] shrink-0">{String.fromCharCode(65 + optIdx)}.</span>
+                                    <span className="flex-1">{option}</span>
                                   </label>
                                 );
                               })}
@@ -965,9 +1053,10 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
                           </div>
                         ))}
                         <button
+                          type="button"
                           onClick={() => handleQuizSubmit(post._id, post.questions)}
                           disabled={submittingQuiz[post._id]}
-                          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] py-2 text-xs font-black text-[#040d1a] hover:opacity-90 transition-opacity disabled:opacity-50"
+                          className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] py-2 text-xs font-black text-[#040d1a] hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
                         >
                           {submittingQuiz[post._id] ? 'Submitting...' : 'Submit Quiz Answers'}
                         </button>

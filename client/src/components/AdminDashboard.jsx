@@ -4,12 +4,13 @@ import {
   BarChart3, CheckCircle2, XCircle, Plus, Sparkles, RefreshCw, Eye,
   Calendar, Clock, LayoutGrid, UserPlus, Lock, Unlock, ArrowRight, Trash2, Edit3,
   FileText, FileSpreadsheet, Download, Camera, UserCheck, ChevronRight, Settings,
-  Building2, Layers, Tag, AlertTriangle, Megaphone
+  Building2, Layers, Tag, AlertTriangle, Megaphone, Award
 } from 'lucide-react';
 import { api } from '../services/api';
 import TimetableTable from './TimetableTable';
 import FacultyTrackerPage from './FacultyTrackerPage';
 import AcademicHub from './AcademicHub';
+import MarksOverviewPage from './MarksOverviewPage';
 import { downloadAttendance } from '../utils/exportUtils';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -659,6 +660,7 @@ export default function AdminDashboard({ user }) {
           { id: 'calendar', label: 'Academic Calendar', icon: Calendar },
           { id: 'announcements', label: 'Announcements', icon: Megaphone },
           { id: 'users', label: 'Students', icon: GraduationCap },
+          { id: 'marks', label: 'Student Marks', icon: Award },
           { id: 'attendance', label: 'Attendance Audit', icon: ShieldCheck }
         ].map(tab => {
           const Icon = tab.icon;
@@ -1961,6 +1963,10 @@ export default function AdminDashboard({ user }) {
             <div className="py-12 text-center text-slate-400 text-sm">No attendance sessions recorded yet.</div>
           )}
         </div>
+      )}
+
+      {activePage === 'marks' && (
+        <MarksOverviewPage user={user} isAdmin={true} />
       )}
 
       {['calendar', 'announcements'].includes(activePage) && (

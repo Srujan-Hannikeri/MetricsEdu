@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, Camera, CheckCircle2, AlertTriangle, Clock, 
-  BookOpen, ShieldCheck, Upload, RefreshCw, UserCheck, AlertCircle, ChevronDown, ChevronUp, Calendar, Megaphone
+  BookOpen, ShieldCheck, Upload, RefreshCw, UserCheck, AlertCircle, ChevronDown, ChevronUp, Calendar, Megaphone,
+  Award
 } from 'lucide-react';
 import { api } from '../services/api';
 import TimetableTable from './TimetableTable';
 import AcademicHub from './AcademicHub';
+import StudentMarksAnalyticsModal from './StudentMarksAnalyticsModal';
 
 export default function StudentDashboard({ user, onUserUpdated }) {
   const [activeTab, setActiveTab] = useState('attendance'); // 'attendance' | 'timetable'
@@ -310,6 +312,18 @@ export default function StudentDashboard({ user, onUserUpdated }) {
           >
             <BookOpen className="w-4 h-4" />
             Study Materials
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('marks')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'marks'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Award className="w-4 h-4" />
+            My Marks &amp; Analytics
           </button>
         </div>
       </div>
@@ -706,6 +720,9 @@ export default function StudentDashboard({ user, onUserUpdated }) {
     </div>
   )}
 
+  {activeTab === 'marks' && (
+    <StudentMarksAnalyticsModal studentId={user?._id} studentInfo={user} isInline={true} />
+  )}
   {activeTab === 'calendar' && <AcademicHub user={user} page="calendar" />}
   {activeTab === 'announcements' && <AcademicHub user={user} page="announcements" />}
   {activeTab === 'materials' && <AcademicHub user={user} page="materials" />}

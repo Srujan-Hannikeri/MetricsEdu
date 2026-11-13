@@ -3,7 +3,7 @@ import {
   Shield, Key, Building2, Users, UserCheck, GraduationCap,
   Sparkles, Copy, Check, Download, AlertTriangle, Bug,
   MessageSquare, RefreshCw, LogOut, ChevronRight, Search,
-  ExternalLink, Layers, Clock, CheckCircle2, XCircle
+  ExternalLink, Layers, Clock, CheckCircle2, XCircle, Plus, X, KeyRound, Eye, EyeOff, UserPlus
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -38,6 +38,164 @@ export default function DeveloperPortal({ onExit }) {
   const [bugFilterStatus, setBugFilterStatus] = useState('all');
   const [bugFilterType, setBugFilterType] = useState('all');
   const [editingNotes, setEditingNotes] = useState({});
+
+  // Team Master Keys state
+  const [keysList, setKeysList] = useState([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [masterSysKey, setMasterSysKey] = useState('metrics-dev-2026');
+  const [showCreateKeyModal, setShowCreateKeyModal] = useState(false);
+  const [keyForm, setKeyForm] = useState({ label: '', role: 'developer', customKey: '' });
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [createKeyError, setCreateKeyError] = useState('');
+  const [createKeySuccess, setCreateKeySuccess] = useState('');
+  const [visibleKeyMap, setVisibleKeyMap] = useState({});
+  const [copiedKeyId, setCopiedKeyId] = useState(null);
+
+  const loadKeys = async () => {
+    if (!devToken) return;
+    setKeysLoading(true);
+    try {
+      const res = await api.getDevKeys(devToken);
+      setKeysList(res.keys || []);
+      if (res.masterKey) setMasterSysKey(res.masterKey);
+    } catch (err) {
+      console.error('Failed to load dev keys:', err);
+    } finally {
+      setKeysLoading(false);
+    }
+  };
+
+  const handleCreateDevKey = async (e) => {
+    e.preventDefault();
+    setCreateKeyError('');
+    setCreateKeySuccess('');
+    if (!keyForm.label.trim()) {
+      setCreateKeyError('Team member name or label is required.');
+      return;
+    }
+    setCreatingKey(true);
+    try {
+      const res = await api.createDevKey(devToken, {
+        label: keyForm.label.trim(),
+        role: keyForm.role,
+        customKey: keyForm.customKey?.trim() || undefined
+      });
+      setCreateKeySuccess(res.message || 'Key generated successfully!');
+      await loadKeys();
+      setTimeout(() => {
+        setShowCreateKeyModal(false);
+        setCreateKeySuccess('');
+        setKeyForm({ label: '', role: 'developer', customKey: '' });
+      }, 1500);
+    } catch (err) {
+      setCreateKeyError(err.message || 'Failed to generate key.');
+    } finally {
+      setCreatingKey(false);
+    }
+  };
+
+  const handleToggleKey = async (keyId) => {
+    try {
+      await api.toggleDevKey(devToken, keyId);
+      loadKeys();
+    } catch (err) {
+      alert(err.message || 'Failed to update key status.');
+    }
+  };
+
+  const handleDeleteKey = async (keyId) => {
+    if (!window.confirm('Delete this developer key? The team member will immediately lose access.')) return;
+    try {
+      await api.deleteDevKey(devToken, keyId);
+      loadKeys();
+    } catch (err) {
+      alert(err.message || 'Failed to delete key.');
+    }
+  };
+
+  const copyKeyText = (keyId, text) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKeyId(keyId);
+    setTimeout(() => setCopiedKeyId(null), 2000);
+  };
+
+  // Add Institution Modal state
+  const [showAddInstModal, setShowAddInstModal] = useState(false);
+  const [instForm, setInstForm] = useState({
+    institutionName: '',
+    institutionType: 'institute',
+    instituteCode: '',
+    adminName: '',
+    adminEmail: '',
+    adminPassword: 'Admin@123'
+  });
+  const [addingInst, setAddingInst] = useState(false);
+  const [addInstError, setAddInstError] = useState('');
+  const [addInstSuccess, setAddInstSuccess] = useState('');
+
+  const handleAutoCode = (name) => {
+    if (!name) return '';
+    const clean = name.replace(/[^a-zA-Z\s]/g, '').trim();
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (words.length >= 2) {
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+    return clean.slice(0, 2).toUpperCase();
+  };
+
+  const handleCreateInstitution = async (e) => {
+    e.preventDefault();
+    setAddInstError('');
+    setAddInstSuccess('');
+
+    if (!instForm.institutionName.trim()) {
+      setAddInstError('Institution name is required.');
+      return;
+    }
+    if (!instForm.adminEmail.trim() || !instForm.adminPassword.trim()) {
+      setAddInstError('Admin email and password are required.');
+      return;
+    }
+
+    const code = (instForm.instituteCode || handleAutoCode(instForm.institutionName)).toUpperCase().slice(0, 2);
+    if (code.length < 2) {
+      setAddInstError('Institute 2-character code is required.');
+      return;
+    }
+
+    setAddingInst(true);
+    try {
+      const res = await api.createDevInstitution(devToken, {
+        institutionName: instForm.institutionName.trim(),
+        institutionType: instForm.institutionType,
+        instituteCode: code,
+        adminName: instForm.adminName.trim() || `${instForm.institutionName.trim()} Administration`,
+        adminEmail: instForm.adminEmail.trim(),
+        adminPassword: instForm.adminPassword.trim()
+      });
+
+      setAddInstSuccess(res.message || 'Institution registered successfully!');
+      setGenInstCode(code);
+      await loadMetrics();
+
+      setTimeout(() => {
+        setShowAddInstModal(false);
+        setAddInstSuccess('');
+        setInstForm({
+          institutionName: '',
+          institutionType: 'institute',
+          instituteCode: '',
+          adminName: '',
+          adminEmail: '',
+          adminPassword: 'Admin@123'
+        });
+      }, 1500);
+    } catch (err) {
+      setAddInstError(err.message || 'Failed to register institution.');
+    } finally {
+      setAddingInst(false);
+    }
+  };
 
   // ─── Authentication ──────────────────────────────────────────────────────────
   const handleDevLogin = async (e) => {
@@ -100,6 +258,7 @@ export default function DeveloperPortal({ onExit }) {
     if (devToken) {
       if (activeTab === 'metrics') loadMetrics();
       else if (activeTab === 'bugs') loadBugs();
+      else if (activeTab === 'keys') loadKeys();
     }
   }, [devToken, activeTab, bugFilterStatus, bugFilterType]);
 
@@ -304,6 +463,21 @@ export default function DeveloperPortal({ onExit }) {
             <Building2 className="h-4 w-4" /> Platform Analytics & Institutions
           </button>
           <button
+            onClick={() => setActiveTab('keys')}
+            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shrink-0 ${
+              activeTab === 'keys'
+                ? 'bg-[#00a896] text-[#040d1a] shadow-md shadow-[#00a896]/20'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <KeyRound className="h-4 w-4" /> Team Master Keys
+            {keysList.filter(k => k.isActive).length > 0 && (
+              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.2 text-[9px] font-black text-emerald-400 border border-emerald-500/30">
+                {keysList.filter(k => k.isActive).length}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('generator')}
             className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shrink-0 ${
               activeTab === 'generator'
@@ -403,6 +577,13 @@ export default function DeveloperPortal({ onExit }) {
                     />
                     <Search className="absolute right-3 top-2 h-3.5 w-3.5 text-slate-500" />
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddInstModal(true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] px-3.5 py-1.5 text-xs font-black text-[#040d1a] hover:opacity-90 transition-opacity shrink-0"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Institution
+                  </button>
                   <button
                     onClick={loadMetrics}
                     className="p-2 rounded-xl border border-[#133966] text-slate-400 hover:text-white"
@@ -532,9 +713,18 @@ export default function DeveloperPortal({ onExit }) {
 
               {/* Institute 2-char code */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Institute 2-Character Code <span className="text-rose-400">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-300">
+                    Institute 2-Character Code <span className="text-rose-400">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddInstModal(true)}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[#00C49F] hover:text-[#67e8f9] transition-colors"
+                  >
+                    <Plus className="h-3 w-3" /> Add New Institution
+                  </button>
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -544,25 +734,30 @@ export default function DeveloperPortal({ onExit }) {
                     maxLength={2}
                     className="w-24 font-mono font-bold uppercase rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white text-center focus:border-[#00a896] focus:outline-none"
                   />
-                  {metricsData.institutions?.length > 0 && (
-                    <select
-                      onChange={e => {
-                        const name = e.target.value;
-                        if (name) {
-                          // Extract 2 initials or first 2 chars
-                          const words = name.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/);
-                          const code = words.length >= 2 ? `${words[0][0]}${words[1][0]}` : name.slice(0, 2);
-                          setGenInstCode(code.toUpperCase());
-                        }
-                      }}
-                      className="flex-1 rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-slate-300 focus:outline-none"
-                    >
-                      <option value="">Quick select from registered campus...</option>
-                      {metricsData.institutions.map(inst => (
-                        <option key={inst.id} value={inst.institutionName}>{inst.institutionName}</option>
-                      ))}
-                    </select>
-                  )}
+                  <select
+                    value={genInstCode}
+                    onChange={e => {
+                      if (e.target.value === '__ADD_NEW__') {
+                        setShowAddInstModal(true);
+                        return;
+                      }
+                      setGenInstCode(e.target.value);
+                    }}
+                    className="flex-1 rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-slate-300 focus:outline-none"
+                  >
+                    <option value="">Quick select from registered campus...</option>
+                    {metricsData.institutions?.map(inst => {
+                      const code = (inst.adminId?.slice(2, 4) || handleAutoCode(inst.institutionName)).toUpperCase();
+                      return (
+                        <option key={inst.id} value={code}>
+                          {inst.institutionName} ({code})
+                        </option>
+                      );
+                    })}
+                    <option value="__ADD_NEW__" className="text-[#00C49F] font-bold">
+                      + Add New Institution...
+                    </option>
+                  </select>
                 </div>
               </div>
 
@@ -697,6 +892,173 @@ export default function DeveloperPortal({ onExit }) {
                   <div className="h-64 flex flex-col items-center justify-center text-center text-slate-500">
                     <Sparkles className="h-10 w-10 text-slate-600 mb-2" />
                     <p className="text-xs">Select your parameters and click Generate Verified IDs</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ────────────────────────────────────────────────────────────────────
+            TAB: TEAM MASTER KEYS & DEVELOPER ACCESS
+        ──────────────────────────────────────────────────────────────────── */}
+        {activeTab === 'keys' && (
+          <div className="space-y-6">
+            {/* Top Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-2xl border border-teal-500/30 bg-teal-950/20 p-4">
+                <div className="flex items-center justify-between text-teal-400">
+                  <span className="text-xs font-semibold">Primary System Key</span>
+                  <Shield className="h-4 w-4 text-[#00C49F]" />
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <p className="font-mono text-xs font-bold text-white truncate max-w-[170px]">{masterSysKey}</p>
+                  <button
+                    onClick={() => copyKeyText('master', masterSysKey)}
+                    className="p-1 rounded text-teal-400 hover:text-white"
+                    title="Copy Master Key"
+                  >
+                    {copiedKeyId === 'master' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+                <p className="mt-1 text-[10px] text-teal-400/70">Master environment override key</p>
+              </div>
+
+              <div className="rounded-2xl border border-[#133966] bg-[#040d1a] p-4">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="text-xs font-semibold">Team Keys</span>
+                  <KeyRound className="h-4 w-4 text-cyan-400" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-white">{keysList.length}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">Generated for developers</p>
+              </div>
+
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-4">
+                <div className="flex items-center justify-between text-emerald-400">
+                  <span className="text-xs font-semibold">Active Keys</span>
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-white">{keysList.filter(k => k.isActive).length}</p>
+                <p className="mt-0.5 text-[10px] text-emerald-400/70">Keys with live console access</p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-4">
+                <div className="flex items-center justify-between text-amber-400">
+                  <span className="text-xs font-semibold">Revoked Keys</span>
+                  <XCircle className="h-4 w-4 text-amber-400" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-white">{keysList.filter(k => !k.isActive).length}</p>
+                <p className="mt-0.5 text-[10px] text-amber-400/70">Access blocked</p>
+              </div>
+            </div>
+
+            {/* Keys Table & Generator Header */}
+            <div className="rounded-2xl border border-[#133966] bg-[#040d1a] p-4 sm:p-5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-[#133966]">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Team Member Access Keys</h3>
+                  <p className="text-xs text-slate-400">Grant dedicated developer master passcodes to your web development teammates</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateKeyModal(true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] px-4 py-2 text-xs font-black text-[#040d1a] hover:opacity-90 transition-opacity"
+                  >
+                    <UserPlus className="h-3.5 w-3.5" /> Generate Master Key
+                  </button>
+                  <button
+                    onClick={loadKeys}
+                    className="p-2 rounded-xl border border-[#133966] text-slate-400 hover:text-white"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${keysLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                {keysLoading ? (
+                  <p className="py-8 text-center text-xs text-slate-400">Loading team keys...</p>
+                ) : keysList.length ? (
+                  <table className="w-full text-left text-xs text-slate-300 min-w-[700px]">
+                    <thead className="border-b border-[#133966] text-[10px] uppercase text-slate-400">
+                      <tr>
+                        <th className="py-2.5 px-3">Team Member</th>
+                        <th className="py-2.5 px-3">Role</th>
+                        <th className="py-2.5 px-3">Master Key Passcode</th>
+                        <th className="py-2.5 px-3 text-center">Status</th>
+                        <th className="py-2.5 px-3">Last Active</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#133966]/40">
+                      {keysList.map(keyItem => (
+                        <tr key={keyItem._id} className="hover:bg-white/5 transition-colors">
+                          <td className="py-3 px-3">
+                            <p className="font-bold text-white">{keyItem.label}</p>
+                            <span className="text-[10px] text-slate-500">Created: {new Date(keyItem.createdAt).toLocaleDateString()}</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="rounded-lg bg-[#071b34] px-2 py-0.5 text-[10px] font-semibold uppercase text-cyan-300 border border-[#133966]">
+                              {keyItem.role.replace('_', ' ')}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2 font-mono">
+                              <span className="font-bold text-slate-200">
+                                {visibleKeyMap[keyItem._id] ? keyItem.key : '••••••••••••••••••••'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setVisibleKeyMap(prev => ({ ...prev, [keyItem._id]: !prev[keyItem._id] }))}
+                                className="text-slate-400 hover:text-white"
+                                title={visibleKeyMap[keyItem._id] ? "Hide Key" : "Reveal Key"}
+                              >
+                                {visibleKeyMap[keyItem._id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyKeyText(keyItem._id, keyItem.key)}
+                                className="text-slate-400 hover:text-emerald-400"
+                                title="Copy Key"
+                              >
+                                {copiedKeyId === keyItem._id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleKey(keyItem._id)}
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors ${
+                                keyItem.isActive
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/30 hover:bg-rose-500/25'
+                              }`}
+                            >
+                              {keyItem.isActive ? 'Active' : 'Revoked'}
+                            </button>
+                          </td>
+                          <td className="py-3 px-3 text-slate-400 text-[11px]">
+                            {keyItem.lastUsedAt ? new Date(keyItem.lastUsedAt).toLocaleString() : 'Never logged in'}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteKey(keyItem._id)}
+                              className="text-xs text-rose-400 hover:text-rose-300 font-semibold"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="py-10 flex flex-col items-center justify-center text-center text-slate-500">
+                    <KeyRound className="h-10 w-10 text-slate-600 mb-2" />
+                    <p className="text-xs">No team keys generated yet. Click "Generate Master Key" to add your developers.</p>
                   </div>
                 )}
               </div>
@@ -849,6 +1211,266 @@ export default function DeveloperPortal({ onExit }) {
             </div>
           </div>
         )}
+
+      
+      {/* ─── Generate Team Key Modal ─────────────────────────────────────── */}
+      {showCreateKeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[#133966] bg-[#040d1a] p-6 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-[#133966] pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-xl bg-[#00a896]/15 p-2 text-[#00C49F]">
+                  <KeyRound className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Generate Developer Key</h3>
+                  <p className="text-[11px] text-slate-400">Creates a secret master key for a team member</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateKeyModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {createKeyError && (
+              <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+                {createKeyError}
+              </div>
+            )}
+
+            {createKeySuccess && (
+              <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+                {createKeySuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateDevKey} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Team Member Name & Role <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={keyForm.label}
+                  onChange={e => setKeyForm({ ...keyForm, label: e.target.value })}
+                  placeholder="e.g. Rahul - Frontend Lead"
+                  className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3.5 py-2 text-xs text-white focus:border-[#00a896] focus:outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">Role Permission</label>
+                <select
+                  value={keyForm.role}
+                  onChange={e => setKeyForm({ ...keyForm, role: e.target.value })}
+                  className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white focus:outline-none"
+                >
+                  <option value="developer">Developer (Full Access)</option>
+                  <option value="lead_developer">Lead Developer</option>
+                  <option value="qa_engineer">QA / Testing Engineer</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Custom Key (Leave blank to auto-generate)
+                </label>
+                <input
+                  type="text"
+                  value={keyForm.customKey}
+                  onChange={e => setKeyForm({ ...keyForm, customKey: e.target.value })}
+                  placeholder="Leave empty for auto-generated secure key"
+                  className="w-full font-mono rounded-xl border border-[#133966] bg-[#071b34] px-3.5 py-2 text-xs text-white focus:border-[#00a896] focus:outline-none"
+                />
+                <p className="mt-1 text-[10px] text-slate-500">Auto-key shape: <span className="font-mono text-slate-400">metrics-dev-xxxx-xxxx</span></p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#133966]">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateKeyModal(false)}
+                  className="rounded-xl border border-[#133966] px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingKey}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] px-5 py-2 text-xs font-black text-[#040d1a] disabled:opacity-50 hover:opacity-90"
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                  {creatingKey ? 'Generating...' : 'Generate & Grant Key'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Add Institution Modal ────────────────────────────────────────── */}
+      {showAddInstModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-[#133966] bg-[#040d1a] p-6 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-[#133966] pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-xl bg-[#00a896]/15 p-2 text-[#00C49F]">
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Register New Institution</h3>
+                  <p className="text-[11px] text-slate-400">Sets up campus tenancy and primary administrator</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddInstModal(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {addInstError && (
+              <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+                {addInstError}
+              </div>
+            )}
+
+            {addInstSuccess && (
+              <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+                {addInstSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateInstitution} className="space-y-3.5">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Institution Full Name <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={instForm.institutionName}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const suggested = handleAutoCode(val);
+                    setInstForm({
+                      ...instForm,
+                      institutionName: val,
+                      instituteCode: instForm.instituteCode || suggested
+                    });
+                  }}
+                  placeholder="e.g. M.S. Ramaiah Institute of Technology"
+                  className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3.5 py-2 text-xs text-white focus:border-[#00a896] focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">Institution Type</label>
+                  <select
+                    value={instForm.institutionType}
+                    onChange={e => setInstForm({ ...instForm, institutionType: e.target.value })}
+                    className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white focus:outline-none"
+                  >
+                    <option value="institute">Institute (Degree / Engg)</option>
+                    <option value="pu_college">PU College (11th & 12th)</option>
+                    <option value="school">School (K-12)</option>
+                    <option value="diploma">Diploma Polytechnic</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    2-Character Code <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={2}
+                    value={instForm.instituteCode}
+                    onChange={e => setInstForm({ ...instForm, instituteCode: e.target.value.toUpperCase().slice(0, 2) })}
+                    placeholder="e.g. MS"
+                    className="w-full font-mono font-bold uppercase rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white text-center focus:border-[#00a896] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#133966]/60 bg-[#071b34]/40 p-2.5 flex items-center justify-between text-xs">
+                <span className="text-slate-400">Formula Admin ID:</span>
+                <span className="font-mono font-bold text-[#00C49F]">
+                  AD{(instForm.instituteCode || 'XX').toUpperCase()}001
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">Admin Contact Name</label>
+                  <input
+                    type="text"
+                    value={instForm.adminName}
+                    onChange={e => setInstForm({ ...instForm, adminName: e.target.value })}
+                    placeholder="Campus Principal / Admin"
+                    className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Admin Email <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={instForm.adminEmail}
+                    onChange={e => setInstForm({ ...instForm, adminEmail: e.target.value })}
+                    placeholder="admin@college.edu"
+                    className="w-full rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Admin Initial Password <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={instForm.adminPassword}
+                  onChange={e => setInstForm({ ...instForm, adminPassword: e.target.value })}
+                  placeholder="Admin@123"
+                  className="w-full font-mono rounded-xl border border-[#133966] bg-[#071b34] px-3 py-2 text-xs text-white focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#133966]">
+                <button
+                  type="button"
+                  onClick={() => setShowAddInstModal(false)}
+                  className="rounded-xl border border-[#133966] px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingInst}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#00a896] to-[#00C49F] px-5 py-2 text-xs font-black text-[#040d1a] disabled:opacity-50 hover:opacity-90"
+                >
+                  <Building2 className="h-3.5 w-3.5" />
+                  {addingInst ? 'Registering...' : 'Register Institution'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );

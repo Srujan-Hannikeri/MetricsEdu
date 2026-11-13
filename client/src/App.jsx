@@ -27,12 +27,15 @@ export default function App() {
     window.addEventListener('popstate', handlePopState);
 
     const handleKeyDown = (e) => {
-      // Secret developer shortcut: Ctrl+Shift+D
+      // Secret developer shortcut: Ctrl+Shift+D ONLY on the main login page (when !user) or to exit dev portal
       if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
-        e.preventDefault();
-        const next = currentPath === '/developer' ? '/' : '/developer';
-        window.history.pushState({}, '', next);
-        setCurrentPath(next);
+        const isDev = currentPath === '/developer' || currentPath === '/dev';
+        if (!user || isDev) {
+          e.preventDefault();
+          const next = isDev ? '/' : '/developer';
+          window.history.pushState({}, '', next);
+          setCurrentPath(next);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -41,7 +44,7 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentPath]);
+  }, [currentPath, user]);
 
   const checkCurrentUser = async () => {
     const token = getToken();

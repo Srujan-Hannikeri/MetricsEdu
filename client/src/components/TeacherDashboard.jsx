@@ -2,12 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera, Upload, CheckCircle2, XCircle, AlertCircle, Users,
   Sparkles, Download, RefreshCw, Eye, BookOpen, Clock, FileSpreadsheet,
-  FileText, Calendar, Lock, Unlock, UserCheck, ShieldCheck, Info, ChevronRight, Megaphone
+  FileText, Calendar, Lock, Unlock, UserCheck, ShieldCheck, Info, ChevronRight, Megaphone,
+  Award, TrendingUp
 } from 'lucide-react';
 import { api } from '../services/api';
 import { downloadAttendance } from '../utils/exportUtils';
 import TimetableTable from './TimetableTable';
 import AcademicHub from './AcademicHub';
+import TeacherMarksEntry from './TeacherMarksEntry';
+import MarksOverviewPage from './MarksOverviewPage';
 
 const TIME_SLOTS = [
   '08:30 AM - 09:25 AM', '09:25 AM - 10:20 AM', '10:50 AM - 11:45 AM',
@@ -326,6 +329,8 @@ export default function TeacherDashboard({ user }) {
           {[
             { id: 'my-classes', label: 'My Assigned Classes', icon: BookOpen },
             { id: 'take-attendance', label: 'Take Attendance', icon: Camera },
+            { id: 'marks-entry', label: 'Exam Marks Entry', icon: Award },
+            { id: 'marks-overview', label: 'Student Marks & Standings', icon: TrendingUp },
             { id: 'timetable', label: 'Timetable', icon: Calendar },
             { id: 'calendar', label: 'Calendar', icon: Calendar },
             { id: 'announcements', label: 'Announcements', icon: Megaphone },
@@ -906,6 +911,8 @@ export default function TeacherDashboard({ user }) {
         </div>
       )}
 
+      {activeTab === 'marks-entry' && <TeacherMarksEntry user={user} />}
+      {activeTab === 'marks-overview' && <MarksOverviewPage user={user} isAdmin={false} />}
       {activeTab === 'calendar' && <AcademicHub user={user} page="calendar" />}
       {activeTab === 'announcements' && <AcademicHub user={user} page="announcements" />}
       {activeTab === 'materials' && <AcademicHub user={user} page="materials" />}
