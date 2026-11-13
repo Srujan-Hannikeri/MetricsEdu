@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "installCommand": "cd server && npm ci && cd ../client && npm ci",
+  "installCommand": "cd server && npm install --no-audit && cd ../client && npm install --no-audit --legacy-peer-deps",
   "buildCommand": "cd client && npm run build",
   "outputDirectory": "client/dist",
   "rewrites": [

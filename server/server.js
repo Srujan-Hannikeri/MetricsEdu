@@ -36,23 +36,31 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-let databaseConnection;
+let cachedMongoose = global._metricsedu_mongoose;
+if (!cachedMongoose) {
+  cachedMongoose = global._metricsedu_mongoose = { conn: null, promise: null };
+}
+
 const connectDatabase = async () => {
-  if (mongoose.connection.readyState === 1 && mongoose.connection.name === DATABASE_NAME) {
+  if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
   }
-  if (mongoose.connection.readyState === 1) {
-    await mongoose.disconnect();
-    databaseConnection = null;
-  }
   if (!process.env.MONGO_URI) throw new Error('MONGO_URI is required to connect to the database.');
-  if (!databaseConnection) {
-    databaseConnection = mongoose.connect(process.env.MONGO_URI, { dbName: DATABASE_NAME }).catch(error => {
-      databaseConnection = null;
+
+  if (!cachedMongoose.promise) {
+    const opts = {
+      dbName: DATABASE_NAME,
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000
+    };
+    cachedMongoose.promise = mongoose.connect(process.env.MONGO_URI, opts).catch(error => {
+      cachedMongoose.promise = null;
       throw error;
     });
   }
-  await databaseConnection;
+  await cachedMongoose.promise;
+  cachedMongoose.conn = mongoose.connection;
   return mongoose.connection;
 };
 

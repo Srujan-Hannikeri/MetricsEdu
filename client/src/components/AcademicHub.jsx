@@ -131,17 +131,35 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
     if (isAdmin) setScheduledListCohort(adminCohortValue(adminCohort));
   }, [isAdmin, adminCohort.semester, adminCohort.standard, adminCohort.pucYear]);
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (isBackground = false) => {
+    // Only show full loading spinner if we have no cached data yet
+    if (!isBackground && (!calendarDataCache.events || !isCalendarPage)) {
+      setLoading(true);
+    }
     setError('');
     try {
       if (isCalendarPage) {
+        // Instant render from memory cache
+        if (calendarDataCache.events && calendarDataCache.semesters) {
+          setEvents(calendarDataCache.events);
+          setSemesterDates(calendarDataCache.semesters);
+          setLoading(false);
+        }
+
         const [eventResponse, semesterResponse] = await Promise.all([
           api.getAcademicEvents(),
-          api.getSemesters()
+          api.getSemesters({ light: true })
         ]);
-        setEvents(eventResponse.events || []);
-        setSemesterDates(semesterResponse.semesters || []);
+
+        const newEvents = eventResponse.events || [];
+        const newSemesters = semesterResponse.semesters || [];
+
+        calendarDataCache.events = newEvents;
+        calendarDataCache.semesters = newSemesters;
+        calendarDataCache.timestamp = Date.now();
+
+        setEvents(newEvents);
+        setSemesterDates(newSemesters);
       } else {
         const postResponse = await api.getLearningPosts();
         setPosts(postResponse.posts || []);
@@ -166,7 +184,8 @@ export default function AcademicHub({ user, adminCohort = {}, page = 'calendar' 
 
   useEffect(() => { loadData(); }, [page, isTeacher, user?._id, adminCohort.branch, adminCohort.semester, adminCohort.standard, adminCohort.pucYear, adminCohort.pucDept, scheduledListCohort]);
   useEffect(() => {
-    const refresh = () => loadData();
+    // Silent background refresh on focus or interval
+    const refresh = () => loadData(true);
     window.addEventListener('focus', refresh);
     const intervalId = window.setInterval(refresh, 60000);
     return () => {

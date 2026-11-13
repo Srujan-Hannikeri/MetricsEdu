@@ -51,11 +51,12 @@ exports.getSemesters = async (req, res) => {
     if (pucYear) filter.pucYear = pucYear;
     if (pucDept) filter.pucDept = pucDept;
 
-    const sems = await Semester.find(filter)
-      .populate('subjects.teacher', 'name teacherId email')
-      .sort({ createdAt: -1 })
-      .lean();
-
+    let query = Semester.find(filter).sort({ createdAt: -1 });
+    if (req.query.light !== 'true') {
+      query = query.populate('subjects.teacher', 'name teacherId email');
+    }
+    const sems = await query.lean();
+    res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=60');
     return res.json({ success: true, semesters: sems });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

@@ -488,6 +488,7 @@ exports.getMarksOverview = async (req, res) => {
     const passCount = marks.filter(m => m.grade !== 'F' && m.grade !== 'AB').length;
     const passRate = totalRecords > 0 ? Math.round((passCount / totalRecords) * 100) : 0;
 
+    res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=60');
     return res.json({
       success: true,
       summary: {
@@ -641,6 +642,7 @@ exports.getStudentMarksHistory = async (req, res) => {
       avgPercentage: val.totalMaxScore > 0 ? Math.round((val.totalScore / val.totalMaxScore) * 1000) / 10 : 0
     }));
 
+    res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=60');
     return res.json({
       success: true,
       student: {

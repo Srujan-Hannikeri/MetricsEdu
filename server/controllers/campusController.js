@@ -67,7 +67,12 @@ exports.getEvents = async (req, res) => {
       institutionType: getInstitutionTypeFilter(req.user.institutionType || 'institute'),
       ...cohortEventFilter(req.user)
     };
-    const events = await AcademicEvent.find(filter).sort({ startDate: 1 }).limit(500).lean();
+    const events = await AcademicEvent.find(filter)
+      .select('title description category startDate endDate branch semester standard pucYear pucDept division')
+      .sort({ startDate: 1 })
+      .limit(500)
+      .lean();
+    res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=60');
     return res.json({ success: true, events });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

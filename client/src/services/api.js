@@ -146,6 +146,7 @@ export const api = {
     if (paramsObj.standard) params.append('standard', paramsObj.standard);
     if (paramsObj.pucYear) params.append('pucYear', paramsObj.pucYear);
     if (paramsObj.pucDept) params.append('pucDept', paramsObj.pucDept);
+    if (paramsObj.light) params.append('light', 'true');
     return request(`/semesters?${params.toString()}`);
   },
   createSemester: (data) => request('/semesters', { method: 'POST', body: JSON.stringify(data) }),

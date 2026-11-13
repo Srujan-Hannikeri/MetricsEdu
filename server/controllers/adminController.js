@@ -79,13 +79,15 @@ exports.getAdminStats = async (req, res) => {
       ]),
       AttendanceSession.find(sessionFilter)
         .select('course teacher sessionDate timeSlot attendancePercentage totalPresent totalEnrolled totalAbsent classPhoto teacherPhoto')
-      .populate('course', 'code title')
-      .populate('teacher', 'name')
-      .sort({ sessionDate: -1 })
-      .limit(15)
+        .populate('course', 'code title')
+        .populate('teacher', 'name')
+        .sort({ sessionDate: -1 })
+        .limit(15)
+        .lean()
     ]);
     const avgAttendance = Math.round(attendanceStats[0]?.average || 0);
 
+    res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=60');
     return res.json({
       success: true,
       stats: {
@@ -211,8 +213,10 @@ exports.getTimetables = async (req, res) => {
     const slots = await Timetable.find(filter)
       .populate('course', 'code title department branch')
       .populate('teacher', 'name teacherId email')
-      .sort({ day: 1, timeSlot: 1 });
+      .sort({ day: 1, timeSlot: 1 })
+      .lean();
 
+    res.set('Cache-Control', 'private, max-age=15, stale-while-revalidate=60');
     return res.json({ success: true, slots });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
