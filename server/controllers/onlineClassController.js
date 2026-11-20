@@ -286,11 +286,6 @@ exports.getSignals = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-  } catch (err) {
-    console.error('getSignals error:', err);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. Heartbeat & Live Attendance Meter (Calculates % Attended vs Class Elapsed)
