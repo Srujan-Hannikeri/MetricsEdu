@@ -74,9 +74,7 @@ function RemoteVideoTile({
   return (
     <div className={`relative rounded-2xl bg-[#071b34] border ${
       hasRaisedHand ? 'border-amber-400 ring-2 ring-amber-400/50' : 'border-[#133966]'
-    } overflow-hidden flex items-center justify-center shadow-lg group ${
-      isMainStage ? 'w-full h-full' : 'w-full h-full min-h-[110px]'
-    }`}>
+    } overflow-hidden flex items-center justify-center shadow-lg group w-full h-full min-h-0 min-w-0`}>
       <video
         ref={videoRef}
         autoPlay
@@ -108,13 +106,13 @@ function RemoteVideoTile({
       )}
 
       {/* Bottom Overlay Label */}
-      <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-        <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5 pointer-events-auto">
-          <span className="truncate max-w-[110px]">{remote?.name || 'Participant'}</span>
+      <div className="absolute bottom-1 sm:bottom-2 left-1 sm:left-2 right-1 sm:right-2 flex items-center justify-between pointer-events-none">
+        <div className="px-1.5 py-0.5 sm:px-2 sm:py-0.5 rounded-lg bg-[#040d1a]/90 backdrop-blur-md border border-[#133966] text-[10px] sm:text-xs font-bold text-white flex items-center gap-1 pointer-events-auto">
+          <span className="truncate max-w-[70px] sm:max-w-[110px]">{remote?.name || 'Participant'}</span>
           {remote?.role === 'teacher' && (
             <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Faculty</span>
           )}
-          {hasRaisedHand && <span className="text-xs animate-bounce">✋ Doubt</span>}
+          {hasRaisedHand && <span className="text-[10px] animate-bounce">✋ Doubt</span>}
         </div>
 
         {/* Teacher Controls on Student Tile: Unmute Doubt, Mute, Video */}
@@ -123,11 +121,11 @@ function RemoteVideoTile({
             {hasRaisedHand && (
               <button
                 onClick={() => onRemoteControl(peerId, 'unmute-audio')}
-                className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 shadow-md transition-all active:scale-95"
+                className="px-1.5 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] flex items-center gap-0.5 shadow-md transition-all active:scale-95"
                 title="Unmute student to answer doubt"
               >
-                <Mic className="w-3 h-3" />
-                <span>Ask Doubt</span>
+                <Mic className="w-2.5 h-2.5" />
+                <span className="hidden sm:inline">Ask Doubt</span>
               </button>
             )}
             <button
@@ -135,7 +133,7 @@ function RemoteVideoTile({
               className="p-1 rounded-lg bg-[#040d1a]/80 hover:bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]"
               title="Mute student"
             >
-              <MicOff className="w-3 h-3 text-rose-400" />
+              <MicOff className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-400" />
             </button>
           </div>
         )}
@@ -160,6 +158,22 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const roomContainerRef = useRef(null);
+  const [teacherGridPage, setTeacherGridPage] = useState(0);
+  const [teacherViewMode, setTeacherViewMode] = useState('grid'); // 'grid' | 'screen'
+
+  // Fullscreen event listener to sync state with native browser fullscreen changes
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    };
+  }, []);
 
   // Peer connections: map of peerId -> RTCPeerConnection
   const [remoteStreams, setRemoteStreams] = useState({}); // peerId -> { stream, name, role }
@@ -878,10 +892,21 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   };
 
   const toggleFullscreen = () => {
+    const elem = roomContainerRef.current || document.documentElement;
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+      } else if (elem.webkitRequestFullscreen) {
+        elem.webkitRequestFullscreen();
+        setIsFullscreen(true);
+      }
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+        setIsFullscreen(false);
+      }
     }
   };
 
@@ -921,11 +946,20 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   const teacherPeer = Object.entries(remoteStreams).find(([id, r]) => r.role === 'teacher') ||
     (!isTeacher && Object.entries(remoteStreams).length > 0 ? Object.entries(remoteStreams)[0] : null);
 
-  // For teacher: identify all student peer streams
+  // For teacher: identify all student peer streams and pagination for 4x4 grid (16 per page)
   const studentPeers = Object.entries(remoteStreams).filter(([id, r]) => r.role !== 'teacher');
+  const totalStudentPages = Math.max(1, Math.ceil(studentPeers.length / 16));
+  const currentStudents = studentPeers.slice(teacherGridPage * 16, (teacherGridPage + 1) * 16);
 
   return (
-    <div className="relative w-full h-[88vh] min-h-[580px] bg-[#020813] text-white rounded-2xl sm:rounded-3xl border border-[#133966] overflow-hidden flex flex-col shadow-2xl">
+    <div
+      ref={roomContainerRef}
+      className={`relative w-full ${
+        isFullscreen
+          ? 'fixed inset-0 z-[9999] h-screen w-screen rounded-none border-0'
+          : 'h-[88vh] min-h-[580px] rounded-2xl sm:rounded-3xl border border-[#133966]'
+      } bg-[#020813] text-white overflow-hidden flex flex-col shadow-2xl`}
+    >
       
       {/* ── Top Bar: Class info, Live badge, 80% Attendance progress ─────────── */}
       <div className="shrink-0 h-16 bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] px-3 sm:px-6 flex items-center justify-between gap-2 z-20">
@@ -1096,60 +1130,157 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         )}
 
         {/* Main Video Presentation Stage */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#020813] p-2 sm:p-3">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#020813] p-1.5 sm:p-2 min-h-0">
           
-          {/* 1. Main Stage / Hero Area */}
-          <div className="flex-1 relative rounded-2xl overflow-hidden border border-[#133966] bg-[#040d1a] flex items-center justify-center min-h-0">
-            
-            {/* If Teacher is sharing screen: show screen share full stage */}
-            {isTeacher && isScreenSharing && screenStream ? (
-              <div className="w-full h-full relative bg-black flex items-center justify-center">
-                <video
-                  ref={(el) => {
-                    screenShareVideoRef.current = el;
-                    if (el && screenStream && el.srcObject !== screenStream) {
-                      el.srcObject = screenStream;
-                      el.play().catch(e => console.warn('Screen play warning:', e));
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-contain"
-                />
-                <div className="absolute top-3 left-3 px-3 py-1 rounded-xl bg-cyan-950/85 border border-cyan-500/50 text-cyan-300 text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-md">
-                  <ScreenShare className="w-4 h-4 text-cyan-400 animate-pulse" />
-                  <span>Presenting Your Screen</span>
+          {/* ── TEACHER VIEW: 4 COLUMNS × 4 ROWS OF STUDENTS ──────────────────── */}
+          {isTeacher ? (
+            <div className="flex-1 flex flex-col min-h-0 w-full relative rounded-2xl overflow-hidden border border-[#133966] bg-[#040d1a]">
+              
+              {/* Teacher Top Control Strip for 4x4 Grid & Screen Share */}
+              <div className="shrink-0 h-10 px-3 bg-[#071b34] border-b border-[#133966] flex items-center justify-between gap-2 z-10">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-[#00C49F]" />
+                    Students Monitor (4 Columns × 4 Rows)
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 text-[10px] font-mono font-bold">
+                    {studentPeers.length} Active
+                  </span>
                 </div>
-              </div>
-            ) : isTeacher ? (
-              /* Teacher's Main Studio Canvas */
-              <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-[#071b34]/80 to-[#040d1a]">
-                <div className="w-16 sm:w-20 h-16 sm:h-20 rounded-3xl bg-gradient-to-tr from-[#00a896] to-[#00C49F] p-0.5 shadow-2xl flex items-center justify-center mb-3">
-                  <div className="w-full h-full bg-[#040d1a] rounded-[22px] flex items-center justify-center text-[#00C49F]">
-                    <Video className="w-8 sm:w-10 h-8 sm:h-10" />
-                  </div>
-                </div>
-                <h3 className="text-base sm:text-lg font-black text-white">
-                  Live Lecture Studio · Division {classInfo?.division || user.division || 'A'}
-                </h3>
-                <p className="text-xs text-slate-300 max-w-md mt-1 leading-relaxed">
-                  Your live camera is actively broadcasting to all students. Click <strong>Share Screen</strong> below to project slides, IDEs, code editors, or notes to the entire class.
-                </p>
-                <div className="mt-4 flex items-center gap-2">
+
+                <div className="flex items-center gap-2">
+                  {/* View Switcher if Teacher is Screen Sharing */}
+                  {isScreenSharing && (
+                    <div className="flex items-center gap-1 p-0.5 rounded-xl bg-[#040d1a] border border-[#133966] text-xs font-bold">
+                      <button
+                        onClick={() => setTeacherViewMode('grid')}
+                        className={`px-2.5 py-0.5 rounded-lg transition-all ${
+                          teacherViewMode === 'grid'
+                            ? 'bg-[#00a896] text-[#040d1a]'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        4×4 Grid
+                      </button>
+                      <button
+                        onClick={() => setTeacherViewMode('screen')}
+                        className={`px-2.5 py-0.5 rounded-lg transition-all ${
+                          teacherViewMode === 'screen'
+                            ? 'bg-cyan-500 text-slate-950'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Screen Share
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Multi-page Pagination for more than 16 students */}
+                  {totalStudentPages > 1 && (
+                    <div className="flex items-center gap-1 bg-[#040d1a] px-2 py-0.5 rounded-lg border border-[#133966] text-[10px] font-mono">
+                      <button
+                        onClick={() => setTeacherGridPage(prev => Math.max(0, prev - 1))}
+                        disabled={teacherGridPage === 0}
+                        className="text-slate-400 hover:text-white disabled:opacity-30 px-1"
+                        title="Previous 16 students"
+                      >
+                        ◀
+                      </button>
+                      <span className="text-cyan-300 px-1">
+                        Page {teacherGridPage + 1}/{totalStudentPages}
+                      </span>
+                      <button
+                        onClick={() => setTeacherGridPage(prev => Math.min(totalStudentPages - 1, prev + 1))}
+                        disabled={teacherGridPage >= totalStudentPages - 1}
+                        className="text-slate-400 hover:text-white disabled:opacity-30 px-1"
+                        title="Next 16 students"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Dedicated Fullscreen Button for Teacher's 4x4 Grid */}
                   <button
-                    onClick={toggleScreenShare}
-                    className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20 hover:scale-105 active:scale-95 transition-all"
+                    onClick={toggleFullscreen}
+                    className="px-2.5 py-1 rounded-xl bg-[#040d1a] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                    title="Toggle Fullscreen 4x4 Grid"
                   >
-                    <ScreenShare className="w-4 h-4" />
-                    <span>Share Screen with Class</span>
+                    {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (4×4)'}</span>
                   </button>
                 </div>
               </div>
-            ) : (
-              /* STUDENT VIEW: ONLY TEACHER IS VISIBLE (whether teacher is sharing camera or screen) */
-              <div className="w-full h-full relative bg-black flex items-center justify-center">
-                {teacherPeer ? (
+
+              {/* Grid Body: Teacher Screen Share OR 4 Rows × 4 Columns Students Grid */}
+              {isScreenSharing && teacherViewMode === 'screen' ? (
+                <div className="flex-1 w-full relative bg-black flex items-center justify-center min-h-0">
+                  <video
+                    ref={(el) => {
+                      screenShareVideoRef.current = el;
+                      if (el && screenStream && el.srcObject !== screenStream) {
+                        el.srcObject = screenStream;
+                        el.play().catch(e => console.warn('Screen play warning:', e));
+                      }
+                    }}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute top-3 left-3 px-3 py-1 rounded-xl bg-cyan-950/85 border border-cyan-500/50 text-cyan-300 text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-md">
+                    <ScreenShare className="w-4 h-4 text-cyan-400 animate-pulse" />
+                    <span>Presenting Your Screen</span>
+                  </div>
+                </div>
+              ) : (
+                /* The 4 Columns and 4 Rows Grid */
+                <div
+                  className="flex-1 min-h-0 w-full p-1.5 sm:p-2 grid grid-cols-4 grid-rows-4 gap-1.5 sm:gap-2 overflow-hidden bg-[#020813]"
+                  style={{
+                    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                    gridTemplateRows: 'repeat(4, minmax(0, 1fr))'
+                  }}
+                >
+                  {Array.from({ length: 16 }).map((_, idx) => {
+                    const studentItem = currentStudents[idx];
+                    if (studentItem) {
+                      const [peerId, remote] = studentItem;
+                      return (
+                        <div key={peerId} className="w-full h-full min-h-0 min-w-0 overflow-hidden">
+                          <RemoteVideoTile
+                            peerId={peerId}
+                            remote={remote}
+                            raisedHands={raisedHands}
+                            isMainStage={false}
+                            isTeacher={true}
+                            onRemoteControl={handleRemoteControl}
+                          />
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={`empty-desk-${idx}`}
+                        className="w-full h-full min-h-0 min-w-0 rounded-xl bg-[#040d1a]/50 border border-[#133966]/30 flex flex-col items-center justify-center text-slate-600 p-1 select-none"
+                      >
+                        <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 opacity-20 text-slate-500 mb-0.5" />
+                        <span className="text-[8px] sm:text-[9px] font-mono opacity-30">
+                          Desk {idx + 1 + teacherGridPage * 16}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+            </div>
+          ) : (
+            /* ── STUDENT VIEW: ONLY TEACHER IS VISIBLE (CAMERA OR SCREEN SHARE) ─── */
+            <div className="flex-1 w-full h-full relative bg-black flex items-center justify-center rounded-2xl overflow-hidden border border-[#133966] min-h-0">
+              {teacherPeer ? (
+                <>
                   <RemoteVideoTile
                     peerId={teacherPeer[0]}
                     remote={teacherPeer[1]}
@@ -1157,68 +1288,32 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                     isMainStage={true}
                     isScreenShareActive={teacherScreenSharing}
                   />
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-6 text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-[#071b34] border border-[#133966] flex items-center justify-center text-[#00C49F] mb-3 animate-pulse">
-                      <Video className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-base font-bold text-white">Connecting to Faculty Live Stream...</h3>
-                    <p className="text-xs text-slate-400 max-w-sm mt-1">
-                      Synchronizing lecture feed with {classInfo?.teacherName || 'Faculty'}. Audio and video are establishing.
-                    </p>
+                  {/* Fullscreen Button on Teacher's Video */}
+                  <button
+                    onClick={toggleFullscreen}
+                    className="absolute top-3 right-3 z-30 px-3 py-1.5 rounded-xl bg-[#040d1a]/85 hover:bg-[#071b34] text-white border border-[#133966] hover:border-[#00C49F] text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-md transition-all group"
+                    title="Fullscreen Faculty Video"
+                  >
+                    {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 text-[#00C49F]" /> : <Maximize2 className="w-3.5 h-3.5 text-[#00C49F]" />}
+                    <span className="hidden sm:inline">{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
+                  </button>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center p-6 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-[#071b34] border border-[#133966] flex items-center justify-center text-[#00C49F] mb-3 animate-pulse">
+                    <Video className="w-8 h-8" />
                   </div>
-                )}
-              </div>
-            )}
-
-          </div>
-
-          {/* 2. FOR TEACHER ONLY: Students Visible in a Row (Filmstrip) */}
-          {isTeacher && (
-            <div className="h-32 sm:h-40 shrink-0 bg-[#040d1a]/95 border border-[#133966] rounded-2xl p-2.5 mt-2 flex flex-col justify-between">
-              <div className="flex items-center justify-between px-1 mb-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-[#00C49F]" />
-                    Students in Class ({studentPeers.length})
-                  </span>
-                  {studentPeers.length > 0 && (
-                    <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
-                      Live Video Streamed
-                    </span>
-                  )}
+                  <h3 className="text-base font-bold text-white">Connecting to Faculty Live Stream...</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mt-1">
+                    Synchronizing lecture feed with {classInfo?.teacherName || 'Faculty'}. Audio and video are establishing.
+                  </p>
                 </div>
-                <span className="text-[10px] text-slate-400 font-mono">
-                  {classInfo?.division ? `Division ${classInfo.division}` : ''}
-                </span>
-              </div>
-
-              {/* Horizontal Scroll Row for Students */}
-              <div className="flex-1 flex overflow-x-auto gap-3 py-1 pr-48 sm:pr-60 scrollbar-thin">
-                {studentPeers.length === 0 ? (
-                  <div className="w-full flex items-center justify-center text-xs text-slate-500 border border-dashed border-[#133966] rounded-xl px-4">
-                    Waiting for students of Division {classInfo?.division} to join. They will appear in this row automatically.
-                  </div>
-                ) : (
-                  studentPeers.map(([peerId, remote]) => (
-                    <div key={peerId} className="w-44 sm:w-52 h-full shrink-0">
-                      <RemoteVideoTile
-                        peerId={peerId}
-                        remote={remote}
-                        raisedHands={raisedHands}
-                        isMainStage={false}
-                        isTeacher={true}
-                        onRemoteControl={handleRemoteControl}
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
+              )}
             </div>
           )}
 
-          {/* 3. FLOATING SELF-PREVIEW WINDOW (Picture-in-Picture at Right Bottom for BOTH) */}
-          <div className="absolute bottom-4 right-4 z-30 w-40 sm:w-52 h-28 sm:h-36 rounded-2xl border-2 border-[#00C49F] overflow-hidden shadow-2xl bg-[#071b34]/95 backdrop-blur-md group transition-all hover:scale-105">
+          {/* ── FLOATING SELF-PREVIEW WINDOW (Picture-in-Picture at Right Bottom for BOTH) ─── */}
+          <div className="absolute bottom-4 right-4 z-30 w-36 sm:w-48 h-24 sm:h-32 rounded-2xl border-2 border-[#00C49F] overflow-hidden shadow-2xl bg-[#071b34]/95 backdrop-blur-md group transition-all hover:scale-105">
             {isVideoOn ? (
               <video
                 ref={(el) => {
@@ -1235,18 +1330,18 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
               />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center p-2 bg-[#040d1a]">
-                <div className="w-10 h-10 rounded-full bg-[#071b34] border border-[#00C49F] flex items-center justify-center font-bold text-white text-sm">
+                <div className="w-9 h-9 rounded-full bg-[#071b34] border border-[#00C49F] flex items-center justify-center font-bold text-white text-xs">
                   {user?.name?.charAt(0) || 'U'}
                 </div>
-                <span className="text-[10px] text-slate-400 mt-1 font-mono">Camera Off</span>
+                <span className="text-[9px] text-slate-400 mt-1 font-mono">Camera Off</span>
               </div>
             )}
 
             {/* Self Preview Label */}
-            <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
-              <div className="px-2 py-0.5 rounded-md bg-[#040d1a]/90 border border-[#133966] text-[10px] font-bold text-white flex items-center gap-1">
-                <span className="truncate max-w-[85px]">{user.name}</span>
-                <span className="text-[9px] text-[#00C49F]">(You)</span>
+            <div className="absolute bottom-1 left-1 right-1 flex items-center justify-between pointer-events-none">
+              <div className="px-1.5 py-0.5 rounded-md bg-[#040d1a]/90 border border-[#133966] text-[9px] font-bold text-white flex items-center gap-1">
+                <span className="truncate max-w-[75px]">{user.name}</span>
+                <span className="text-[8px] text-[#00C49F]">(You)</span>
                 {isHandRaised && !isTeacher && <span>✋</span>}
               </div>
               <div className="flex items-center gap-1">
