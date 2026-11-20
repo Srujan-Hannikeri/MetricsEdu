@@ -100,27 +100,21 @@ exports.startClass = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. Get Active Live Classes (For Students and Teachers)
+// 2. Get Active Live Classes (For Students, Teachers, and Admins)
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getActiveClasses = async (req, res) => {
   try {
     const user = req.user;
-    const filter = { status: 'live' };
+    const filter = { status: { $in: ['live', 'active'] } };
 
     if (user.role === 'student') {
-      // Must match student's division & institution details
-      const studentDiv = (user.division || user.section || 'A').toUpperCase().trim();
-      filter.division = studentDiv;
+      const requestedDiv = req.query.division ? req.query.division.trim().toUpperCase() : null;
+      const userDiv = (user.division || user.section || '').trim().toUpperCase();
+      const divToMatch = requestedDiv || userDiv;
 
-      if (user.institutionType) {
-        filter.institutionType = user.institutionType;
-      }
-      if (user.institutionType === 'school' && user.standard) {
-        filter.standard = user.standard;
-      } else if (user.institutionType === 'pu_college' && user.pucYear) {
-        filter.pucYear = user.pucYear;
-      } else if (user.semester) {
-        filter.semester = user.semester;
+      if (divToMatch) {
+        // Case-insensitive regex match for division (e.g. 'A', 'B', 'C')
+        filter.division = { $regex: new RegExp(`^${divToMatch}$`, 'i') };
       }
     } else if (user.role === 'teacher') {
       filter.teacher = user._id;

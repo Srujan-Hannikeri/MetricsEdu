@@ -92,7 +92,7 @@ export default function OnlineClassesTab({ user }) {
     }
   };
 
-  // If currently in a live WebRTC room, render the room component full stage
+  // If currently in a live online classroom, render the room component full stage
   if (activeClassroom) {
     return (
       <OnlineClassRoom

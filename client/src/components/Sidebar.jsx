@@ -198,15 +198,21 @@ export default function Sidebar({
 
   return (
     <>
-      {/* ── Desktop Fixed Sidebar (hidden on mobile) ─────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-64 lg:w-72 shrink-0 border-r border-[#133966] bg-[#040d1a] sticky top-16 sm:top-20 h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)] z-30 shadow-xl overflow-hidden">
-        {sidebarContent}
+      {/* ── Desktop Collapsible Sidebar (Toggles on ALL screens) ──────────────── */}
+      <aside
+        className={`hidden md:flex flex-col shrink-0 border-r border-[#133966] bg-[#040d1a] sticky top-16 sm:top-20 h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)] z-30 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
+          isOpen ? 'w-64 lg:w-72 opacity-100' : 'w-0 opacity-0 border-r-0 pointer-events-none'
+        }`}
+      >
+        <div className="w-64 lg:w-72 h-full flex flex-col">
+          {sidebarContent}
+        </div>
       </aside>
 
-      {/* ── Mobile Hamburger Drawer (slides in from left when isOpen) ────────── */}
+      {/* ── Mobile & Tablet Slide-over Drawer (when isOpen) ─────────────────── */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 bg-[#040d1a]/80 backdrop-blur-md flex md:hidden animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-[#040d1a]/85 backdrop-blur-md flex md:hidden animate-in fade-in duration-200"
           onClick={onClose}
         >
           <div

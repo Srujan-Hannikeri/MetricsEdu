@@ -211,7 +211,7 @@ export const api = {
   },
   getStudentMarksHistory: (studentId) => request(`/marks/student/${studentId}`),
 
-  // ─── Online Classes & WebRTC Attendance ───────────────────────────────────
+  // ─── Online Classes & Automated 80% Attendance ─────────────────────────────
   startOnlineClass: (payload) => request('/online-class/start', { method: 'POST', body: JSON.stringify(payload) }),
   getActiveOnlineClass: (params = {}) => {
     const q = new URLSearchParams(params).toString();

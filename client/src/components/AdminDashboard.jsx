@@ -11,6 +11,7 @@ import TimetableTable from './TimetableTable';
 import FacultyTrackerPage from './FacultyTrackerPage';
 import AcademicHub from './AcademicHub';
 import MarksOverviewPage from './MarksOverviewPage';
+import OnlineClassesManager from './OnlineClassesManager';
 import { downloadAttendance } from '../utils/exportUtils';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -660,36 +661,6 @@ export default function AdminDashboard({ user }) {
               <span className={`px-3 py-1.5 rounded-xl text-xs font-bold border ${b.cls}`}>{b.label}</span>
             );
           })()}
-        </div>
-      </div>
-
-      {/* Navigation tabs (Horizontally Scrollable on Mobile) */}
-      <div className="w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
-        <div className="flex w-max min-w-full items-center gap-1.5">
-        {[
-          { id: 'overview', label: 'Overview', icon: BarChart3 },
-          { id: 'schedule-setup', label: 'Schedule Setup', icon: Settings },
-          { id: 'timetable', label: 'Timetable', icon: Calendar },
-          { id: 'divisions', label: 'Divisions', icon: Users },
-          { id: 'faculty-tracker', label: 'Faculty Tracker', icon: UserCheck },
-          { id: 'courses', label: 'Courses', icon: BookOpen },
-          { id: 'calendar', label: 'Academic Calendar', icon: Calendar },
-          { id: 'announcements', label: 'Announcements', icon: Megaphone },
-          { id: 'users', label: 'Students', icon: GraduationCap },
-          { id: 'marks', label: 'Student Marks', icon: Award },
-          { id: 'attendance', label: 'Attendance Audit', icon: ShieldCheck }
-        ].map(tab => {
-          const Icon = tab.icon;
-          const isActive = activePage === tab.id;
-          return (
-            <button key={tab.id} onClick={() => { setActivePage(tab.id); setBanner({ type: '', msg: '' }); }}
-              className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold transition-all ${isActive
-                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
-                : 'text-slate-300 hover:text-white hover:bg-[#0b2444]'}`}>
-              <Icon className="w-4 h-4" />{tab.label}
-            </button>
-          );
-        })}
         </div>
       </div>
 
@@ -1981,7 +1952,11 @@ export default function AdminDashboard({ user }) {
         </div>
       )}
 
-      {activePage === 'marks' && (
+      {activePage === 'online-class' && (
+        <OnlineClassesManager user={user} />
+      )}
+
+      {(activePage === 'marks' || activePage === 'marks-overview') && (
         <MarksOverviewPage user={user} isAdmin={true} />
       )}
 

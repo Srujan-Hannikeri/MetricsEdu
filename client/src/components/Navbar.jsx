@@ -121,15 +121,20 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
         {/* Left: Mobile Hamburger Button & Brand Logo */}
         <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
           
-          {/* Mobile Hamburger Menu Toggle Button */}
+          {/* Universal Sidebar & Menu Toggle Button (All Devices) */}
           {user && (
             <button
               type="button"
               onClick={onToggleMobileMenu || (() => setShowMobileMenu(!showMobileMenu))}
-              aria-label="Open navigation menu"
-              className="md:hidden flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] transition-colors"
+              aria-label="Toggle navigation menu"
+              className="flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] transition-all shadow-sm group"
+              title={(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? 'Collapse Menu' : 'Expand Menu'}
             >
-              {(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? (
+                <X className="w-5 h-5 text-slate-300 group-hover:text-white" />
+              ) : (
+                <Menu className="w-5 h-5 text-[#00C49F] group-hover:scale-105 transition-transform" />
+              )}
             </button>
           )}
 

@@ -16,7 +16,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
   const [currentActiveTab, setCurrentActiveTab] = useState('overview');
 
   // Background initialization & auth restoration
@@ -124,8 +124,8 @@ export default function App() {
         user={user}
         onLogout={handleLogout}
         onOpenFeedback={() => setShowFeedbackModal(true)}
-        onToggleMobileMenu={() => setIsMobileMenuOpen(prev => !prev)}
-        isMobileMenuOpen={isMobileMenuOpen}
+        onToggleMobileMenu={() => setIsSidebarOpen(prev => !prev)}
+        isMobileMenuOpen={isSidebarOpen}
       />
 
       {/* Main Layout: Sidebar on Desktop & Mobile Drawer + Content on Right */}
@@ -138,8 +138,8 @@ export default function App() {
               setCurrentActiveTab(tabId);
               window.dispatchEvent(new CustomEvent('metricsedu:navigate-tab', { detail: { tab: tabId } }));
             }}
-            isOpen={isMobileMenuOpen}
-            onClose={() => setIsMobileMenuOpen(false)}
+            isOpen={isSidebarOpen}
+            onClose={() => setIsSidebarOpen(false)}
             onLogout={handleLogout}
             onOpenFeedback={() => setShowFeedbackModal(true)}
           />

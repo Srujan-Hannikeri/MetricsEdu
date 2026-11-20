@@ -352,32 +352,6 @@ export default function TeacherDashboard({ user }) {
           <h1 className="text-xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">Welcome, {user?.name}</h1>
           <p className="text-xs sm:text-sm text-cyan-200/70 font-medium">Smart Classroom Attendance · Timetable · Session Reports</p>
         </div>
-        <div className="mt-4 w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
-          <div className="flex w-max min-w-full items-center gap-1">
-          {[
-            { id: 'online-class', label: '🎥 Live Online Classes', icon: Video },
-            { id: 'my-classes', label: 'My Assigned Classes', icon: BookOpen },
-            { id: 'take-attendance', label: 'Take Attendance', icon: Camera },
-            { id: 'marks-entry', label: 'Exam Marks Entry', icon: Award },
-            { id: 'marks-overview', label: 'Student Marks & Standings', icon: TrendingUp },
-            { id: 'timetable', label: 'Timetable', icon: Calendar },
-            { id: 'calendar', label: 'Calendar', icon: Calendar },
-            { id: 'announcements', label: 'Announcements', icon: Megaphone },
-            { id: 'materials', label: 'Study Materials', icon: BookOpen },
-            { id: 'history', label: `Sessions (${sessions.length})`, icon: Clock }
-          ].map(tab => {
-            const Icon = tab.icon;
-            return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === tab.id
-                  ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
-                  : 'text-slate-400 hover:text-white'}`}>
-                <Icon className="w-4 h-4" />{tab.label}
-              </button>
-            );
-          })}
-          </div>
-        </div>
       </div>
 
       {/* Success banner */}

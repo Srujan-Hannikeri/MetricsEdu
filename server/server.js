@@ -46,7 +46,8 @@ const connectDatabase = async () => {
   if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
   }
-  if (!process.env.MONGO_URI) throw new Error('MONGO_URI is required to connect to the database.');
+  const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+  if (!mongoUri) throw new Error('MONGODB_URI or MONGO_URI is required to connect to the database.');
 
   if (!cachedMongoose.promise) {
     const opts = {
@@ -55,7 +56,7 @@ const connectDatabase = async () => {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000
     };
-    cachedMongoose.promise = mongoose.connect(process.env.MONGO_URI, opts).catch(error => {
+    cachedMongoose.promise = mongoose.connect(mongoUri, opts).catch(error => {
       cachedMongoose.promise = null;
       throw error;
     });

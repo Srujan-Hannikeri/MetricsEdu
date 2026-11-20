@@ -9,9 +9,54 @@ import { api } from '../services/api';
 const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
   ]
 };
+
+function RemoteVideoTile({ peerId, remote, raisedHands }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !remote?.stream) return;
+
+    if (videoEl.srcObject !== remote.stream) {
+      videoEl.srcObject = remote.stream;
+    }
+
+    const playPromise = videoEl.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.warn('Autoplay error on remote tile, attempting muted fallback:', err);
+        videoEl.muted = true;
+        videoEl.play().catch(e => console.warn('Muted autoplay fallback error:', e));
+      });
+    }
+  }, [remote?.stream, remote?.version]);
+
+  const hasRaisedHand = raisedHands?.some(h => h.studentId === peerId);
+
+  return (
+    <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className="w-full h-full object-cover"
+      />
+      <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+        <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
+          <span className="truncate max-w-[120px]">{remote?.name || 'Participant'}</span>
+          {remote?.role === 'teacher' && (
+            <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Faculty</span>
+          )}
+          {hasRaisedHand && <span className="text-xs">✋</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }) {
   const isTeacher = user?.role === 'teacher';
@@ -66,6 +111,33 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   const chatScrollRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const signalIntervalRef = useRef(null);
+
+  const activeLocalStream = isScreenSharing && screenStream ? screenStream : localStream;
+
+  // Ensure local video element gets stream attached whenever activeLocalStream or loading changes
+  useEffect(() => {
+    if (localVideoRef.current && activeLocalStream) {
+      if (localVideoRef.current.srcObject !== activeLocalStream) {
+        localVideoRef.current.srcObject = activeLocalStream;
+      }
+      localVideoRef.current.play().catch(e => console.warn('Local video play warning:', e));
+    }
+  }, [activeLocalStream, loading, isVideoOn, isScreenSharing]);
+
+  // Student fallback ping if no remote faculty stream is detected within 2.5s of joining
+  useEffect(() => {
+    if (!isTeacher && !loading) {
+      const timer = setTimeout(() => {
+        if (Object.keys(remoteStreams).length === 0) {
+          api.sendOnlineClassSignal(classId, {
+            type: 'request-offer',
+            payload: { role: user.role, name: user.name }
+          }).catch(() => {});
+        }
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, isTeacher, Object.keys(remoteStreams).length, classId]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // 1. Initialize Room & Media
@@ -283,27 +355,27 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       let stream = event.streams && event.streams[0];
       if (!stream) {
         stream = new MediaStream();
-        if (event.track) stream.addTrack(event.track);
       }
+      if (event.track && !stream.getTracks().some(t => t.id === event.track.id)) {
+        stream.addTrack(event.track);
+      }
+
       setRemoteStreams(prev => {
         const existing = prev[peerId]?.stream;
-        if (existing && event.track && !existing.getTracks().includes(event.track)) {
-          existing.addTrack(event.track);
-          return {
-            ...prev,
-            [peerId]: {
-              stream: existing,
-              name: peerName || prev[peerId]?.name || 'Participant',
-              role: peerRole || prev[peerId]?.role || 'student'
-            }
-          };
+        let finalStream = stream;
+        if (existing) {
+          if (event.track && !existing.getTracks().some(t => t.id === event.track.id)) {
+            existing.addTrack(event.track);
+          }
+          finalStream = new MediaStream(existing.getTracks());
         }
         return {
           ...prev,
           [peerId]: {
-            stream,
-            name: peerName || 'Participant',
-            role: peerRole || 'student'
+            stream: finalStream,
+            name: peerName || prev[peerId]?.name || 'Participant',
+            role: peerRole || prev[peerId]?.role || 'student',
+            version: Date.now()
           }
         };
       });
@@ -369,6 +441,13 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         break;
       }
 
+      case 'request-offer': {
+        if (isTeacher) {
+          await initiateCallToPeer(from, fromName, payload?.role || 'student');
+        }
+        break;
+      }
+
       case 'offer': {
         try {
           const pc = getOrCreatePeerConnection(from, fromName, payload?.senderRole);
@@ -404,18 +483,20 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
       case 'ice-candidate': {
         const pc = peerConnectionsRef.current.get(from);
-        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-          } catch (err) {
-            console.warn('Error adding ICE candidate:', err);
+        if (payload?.candidate) {
+          if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            } catch (err) {
+              console.warn('Error adding ICE candidate:', err);
+            }
+          } else {
+            // Buffer candidate until remote description is set
+            if (!iceCandidateQueueRef.current.has(from)) {
+              iceCandidateQueueRef.current.set(from, []);
+            }
+            iceCandidateQueueRef.current.get(from).push(payload.candidate);
           }
-        } else {
-          // Buffer candidate until remote description is set
-          if (!iceCandidateQueueRef.current.has(from)) {
-            iceCandidateQueueRef.current.set(from, []);
-          }
-          iceCandidateQueueRef.current.get(from).push(payload.candidate);
         }
         break;
       }
@@ -717,7 +798,13 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg group">
             {isVideoOn || isScreenSharing ? (
               <video
-                ref={localVideoRef}
+                ref={(el) => {
+                  localVideoRef.current = el;
+                  if (el && activeLocalStream && el.srcObject !== activeLocalStream) {
+                    el.srcObject = activeLocalStream;
+                    el.play().catch(e => console.warn('Local video play warning:', e));
+                  }
+                }}
                 autoPlay
                 playsInline
                 muted
@@ -756,28 +843,12 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
           {/* 2. Remote Video Tiles for Connected Peers */}
           {Object.entries(remoteStreams).map(([peerId, remote]) => (
-            <div key={peerId} className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg">
-              <video
-                autoPlay
-                playsInline
-                ref={(el) => {
-                  if (el && remote.stream && el.srcObject !== remote.stream) {
-                    el.srcObject = remote.stream;
-                    el.play().catch(e => console.warn('Autoplay error:', e));
-                  }
-                }}
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-                <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="truncate max-w-[120px]">{remote.name}</span>
-                  {remote.role === 'teacher' && (
-                    <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Faculty</span>
-                  )}
-                  {raisedHands.some(h => h.studentId === peerId) && <span className="text-xs">✋</span>}
-                </div>
-              </div>
-            </div>
+            <RemoteVideoTile
+              key={peerId}
+              peerId={peerId}
+              remote={remote}
+              raisedHands={raisedHands}
+            />
           ))}
 
           {/* Placeholder if waiting for peers */}

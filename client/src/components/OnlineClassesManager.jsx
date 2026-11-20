@@ -12,7 +12,8 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
   // Teacher Creation Form state
   const [courses, setCourses] = useState([]);
   const [selectedCourseId, setSelectedCourseId] = useState('');
-  const [selectedDivision, setSelectedDivision] = useState(user.division || 'C');
+  const [selectedDivision, setSelectedDivision] = useState(user.division || user.section || 'A');
+  const [activeDivision, setActiveDivision] = useState(user.division || user.section || 'A');
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [classTitle, setClassTitle] = useState('');
   const [startingClass, setStartingClass] = useState(false);
@@ -25,10 +26,10 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
 
   useEffect(() => {
     loadInitialData();
-    // Poll active session every 10s
-    const timer = setInterval(checkActiveSession, 10000);
+    // Poll active session every 6s
+    const timer = setInterval(checkActiveSession, 6000);
     return () => clearInterval(timer);
-  }, []);
+  }, [activeDivision, selectedDivision]);
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -54,10 +55,12 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
 
   const checkActiveSession = async () => {
     try {
-      const div = user.division || user.section || 'C';
-      const res = await api.getActiveOnlineClass({ division: div });
+      const div = isTeacher ? selectedDivision : (activeDivision || user.division || user.section || 'A');
+      const params = div ? { division: div } : {};
+      const res = await api.getActiveOnlineClass(params);
       if (res.success) {
-        setActiveSession(res.session);
+        const live = res.session || (res.classes && res.classes[0]) || (res.sessions && res.sessions[0]) || null;
+        setActiveSession(live);
       }
     } catch (err) {
       console.warn('Error checking active online class:', err);
@@ -66,9 +69,10 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
 
   const loadHistory = async () => {
     try {
-      const res = await api.getOnlineClassHistory({ division: user.division });
+      const div = user.division || user.section || activeDivision || 'A';
+      const res = await api.getOnlineClassHistory({ division: div });
       if (res.success) {
-        setHistory(res.sessions || []);
+        setHistory(res.sessions || res.classes || []);
       }
     } catch (err) {
       console.warn('Error loading history:', err);
@@ -326,16 +330,37 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
 
       {/* ── STUDENT: NO ACTIVE CLASS PLACEHOLDER ────────────────────────────── */}
       {isStudent && (!activeSession || (activeSession.status !== 'active' && activeSession.status !== 'live')) && (
-        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-8 text-center space-y-3">
+        <div className="bg-[#071b34]/95 border border-[#133966] rounded-3xl p-6 sm:p-8 text-center space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-[#0b2444] border border-[#133966] p-3 mx-auto flex items-center justify-center text-slate-400">
             <Video className="w-8 h-8 text-[#00C49F]" />
           </div>
           <h2 className="text-base font-bold text-white">
-            No Active Online Class Right Now
+            No Active Online Class Found for Division {activeDivision}
           </h2>
           <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-            There is currently no live lecture running for <strong>Division {user.division || user.section || 'C'}</strong>. When your lecturer launches an online class, it will appear here automatically with a 1-click join button.
+            When your lecturer launches an online class for Division <strong>{activeDivision}</strong>, it will appear here automatically with an instant join button.
           </p>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            <span className="text-xs text-slate-400 font-mono">Check Division:</span>
+            <div className="inline-flex rounded-xl bg-[#040d1a] p-1 border border-[#133966]">
+              {['A', 'B', 'C', 'D'].map(d => (
+                <button
+                  key={d}
+                  onClick={() => {
+                    setActiveDivision(d);
+                    setTimeout(checkActiveSession, 50);
+                  }}
+                  className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                    activeDivision === d
+                      ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md'
+                      : 'text-slate-300 hover:text-white hover:bg-[#071b34]'
+                  }`}
+                >
+                  Div {d}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="pt-2">
             <span className="text-[11px] font-mono text-cyan-300 bg-[#00a896]/15 px-3 py-1 rounded-full border border-[#00a896]/30">
               Attendance policy: 80% presence during lecture = Present
