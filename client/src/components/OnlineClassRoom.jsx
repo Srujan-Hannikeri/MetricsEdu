@@ -10,12 +10,45 @@ const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' }
   ]
 };
 
-function RemoteVideoTile({ peerId, remote, raisedHands }) {
+function playHandRaiseChime() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.6);
+  } catch (e) {
+    console.warn('Audio chime warning:', e);
+  }
+}
+
+function RemoteVideoTile({
+  peerId,
+  remote,
+  raisedHands,
+  isMainStage = false,
+  isTeacher = false,
+  onRemoteControl = null,
+  isScreenShareActive = false
+}) {
   const videoRef = useRef(null);
+  const [mutedPlayback, setMutedPlayback] = useState(false);
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -30,6 +63,7 @@ function RemoteVideoTile({ peerId, remote, raisedHands }) {
       playPromise.catch(err => {
         console.warn('Autoplay error on remote tile, attempting muted fallback:', err);
         videoEl.muted = true;
+        setMutedPlayback(true);
         videoEl.play().catch(e => console.warn('Muted autoplay fallback error:', e));
       });
     }
@@ -38,21 +72,73 @@ function RemoteVideoTile({ peerId, remote, raisedHands }) {
   const hasRaisedHand = raisedHands?.some(h => h.studentId === peerId);
 
   return (
-    <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg">
+    <div className={`relative rounded-2xl bg-[#071b34] border ${
+      hasRaisedHand ? 'border-amber-400 ring-2 ring-amber-400/50' : 'border-[#133966]'
+    } overflow-hidden flex items-center justify-center shadow-lg group ${
+      isMainStage ? 'w-full h-full' : 'w-full h-full min-h-[110px]'
+    }`}>
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        className="w-full h-full object-cover"
+        className={`w-full h-full ${isMainStage ? 'object-contain bg-black' : 'object-cover'}`}
       />
+
+      {/* Screen Share Active Badge on Student View */}
+      {isMainStage && isScreenShareActive && (
+        <div className="absolute top-3 left-3 px-3 py-1 rounded-xl bg-cyan-950/85 border border-cyan-500/50 text-cyan-300 text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-md">
+          <ScreenShare className="w-4 h-4 text-cyan-400 animate-pulse" />
+          <span>Faculty Presenting Screen</span>
+        </div>
+      )}
+
+      {/* If autoplay muted fallback was triggered on main stage, show click-to-unmute audio */}
+      {mutedPlayback && isMainStage && (
+        <button
+          onClick={() => {
+            if (videoRef.current) {
+              videoRef.current.muted = false;
+              setMutedPlayback(false);
+            }
+          }}
+          className="absolute top-3 right-3 px-2.5 py-1 rounded-xl bg-rose-600/90 text-white font-bold text-xs flex items-center gap-1 shadow-lg hover:bg-rose-500 transition-all z-20 pointer-events-auto"
+        >
+          <span>Click to Unmute Audio 🔊</span>
+        </button>
+      )}
+
+      {/* Bottom Overlay Label */}
       <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-        <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
-          <span className="truncate max-w-[120px]">{remote?.name || 'Participant'}</span>
+        <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5 pointer-events-auto">
+          <span className="truncate max-w-[110px]">{remote?.name || 'Participant'}</span>
           {remote?.role === 'teacher' && (
             <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Faculty</span>
           )}
-          {hasRaisedHand && <span className="text-xs">✋</span>}
+          {hasRaisedHand && <span className="text-xs animate-bounce">✋ Doubt</span>}
         </div>
+
+        {/* Teacher Controls on Student Tile: Unmute Doubt, Mute, Video */}
+        {isTeacher && onRemoteControl && (
+          <div className="flex items-center gap-1 pointer-events-auto">
+            {hasRaisedHand && (
+              <button
+                onClick={() => onRemoteControl(peerId, 'unmute-audio')}
+                className="px-2 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] flex items-center gap-1 shadow-md transition-all active:scale-95"
+                title="Unmute student to answer doubt"
+              >
+                <Mic className="w-3 h-3" />
+                <span>Ask Doubt</span>
+              </button>
+            )}
+            <button
+              onClick={() => onRemoteControl(peerId, 'mute-audio')}
+              className="p-1 rounded-lg bg-[#040d1a]/80 hover:bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]"
+              title="Mute student"
+            >
+              <MicOff className="w-3 h-3 text-rose-400" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -107,22 +193,45 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
   // Refs for tracking and intervals
   const localVideoRef = useRef(null);
+  const screenShareVideoRef = useRef(null);
   const lastSignalTimeRef = useRef(0);
+  const lastSeqRef = useRef(0);
+  const processedSignalIds = useRef(new Set());
   const chatScrollRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
   const signalIntervalRef = useRef(null);
 
-  const activeLocalStream = isScreenSharing && screenStream ? screenStream : localStream;
+  // Notifications and Remote Teacher Controls state
+  const [handRaiseNotification, setHandRaiseNotification] = useState(null);
+  const [userNotice, setUserNotice] = useState('');
+  const [teacherScreenSharing, setTeacherScreenSharing] = useState(false);
 
-  // Ensure local video element gets stream attached whenever activeLocalStream or loading changes
   useEffect(() => {
-    if (localVideoRef.current && activeLocalStream) {
-      if (localVideoRef.current.srcObject !== activeLocalStream) {
-        localVideoRef.current.srcObject = activeLocalStream;
-      }
-      localVideoRef.current.play().catch(e => console.warn('Local video play warning:', e));
+    if (userNotice) {
+      const timer = setTimeout(() => setUserNotice(''), 5000);
+      return () => clearTimeout(timer);
     }
-  }, [activeLocalStream, loading, isVideoOn, isScreenSharing]);
+  }, [userNotice]);
+
+  // Ensure local video element gets stream attached whenever localStream or isVideoOn changes
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      if (localVideoRef.current.srcObject !== localStream) {
+        localVideoRef.current.srcObject = localStream;
+      }
+      localVideoRef.current.play().catch(e => console.warn('Local preview play warning:', e));
+    }
+  }, [localStream, loading, isVideoOn]);
+
+  // Ensure screen share video element gets screenStream attached whenever teacher presents
+  useEffect(() => {
+    if (screenShareVideoRef.current && screenStream) {
+      if (screenShareVideoRef.current.srcObject !== screenStream) {
+        screenShareVideoRef.current.srcObject = screenStream;
+      }
+      screenShareVideoRef.current.play().catch(e => console.warn('Screen share play warning:', e));
+    }
+  }, [screenStream, isScreenSharing]);
 
   // Student fallback ping if no remote faculty stream is detected within 2.5s of joining
   useEffect(() => {
@@ -148,18 +257,20 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     async function init() {
       try {
         setLoading(true);
-        // 1. Join room on server
-        const joinRes = await api.joinOnlineClass(classId);
+
+        // 1. Start local camera/mic media IMMEDIATELY and server join in parallel for instant video activation
+        const mediaPromise = initLocalMedia();
+        const joinPromise = api.joinOnlineClass(classId);
+
+        const [_, joinRes] = await Promise.all([mediaPromise, joinPromise]);
         if (!mounted) return;
+
         setClassInfo(joinRes.onlineClass || joinRes.session);
         setChatMessages(joinRes.onlineClass?.chatMessages || joinRes.session?.chatMessages || []);
         setRaisedHands(joinRes.onlineClass?.raisedHands || joinRes.session?.raisedHands || []);
         setParticipantsList(joinRes.onlineClass?.participants || joinRes.session?.participants || []);
 
-        // 2. Start local user media
-        await initLocalMedia();
-
-        // 3. Notify peers that we joined
+        // 2. Notify peers that we joined
         await api.sendOnlineClassSignal(classId, {
           type: 'user-joined',
           payload: { role: user.role, name: user.name }
@@ -219,20 +330,27 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   // ───────────────────────────────────────────────────────────────────────────
   const initLocalMedia = async () => {
     try {
+      // Use standard responsive constraints that initialize immediately on all webcams
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } },
+        video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 30 } },
         audio: true
       });
       localStreamRef.current = stream;
       setLocalStream(stream);
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
       }
 
       // Add tracks to any existing peer connections
       peerConnectionsRef.current.forEach(pc => {
         stream.getTracks().forEach(track => {
-          try { pc.addTrack(track, stream); } catch (e) {}
+          try {
+            const senders = pc.getSenders();
+            if (!senders.some(s => s.track && s.track.kind === track.kind)) {
+              pc.addTrack(track, stream);
+            }
+          } catch (e) {}
         });
       });
     } catch (err) {
@@ -282,10 +400,8 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         setScreenStream(null);
       }
       setIsScreenSharing(false);
-      if (localStreamRef.current && localVideoRef.current) {
-        localVideoRef.current.srcObject = localStreamRef.current;
-      }
-      // Replace track on existing peer connections
+
+      // Replace track on existing peer connections with camera
       const camTrack = localStreamRef.current?.getVideoTracks()[0];
       if (camTrack) {
         peerConnectionsRef.current.forEach(pc => {
@@ -293,14 +409,17 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           if (sender) sender.replaceTrack(camTrack);
         });
       }
+
+      // Broadcast screen share stopped to students
+      api.sendOnlineClassSignal(classId, {
+        type: 'screen-share-status',
+        payload: { isSharing: false, by: user.name }
+      }).catch(() => {});
     } else {
       try {
         const screen = await navigator.mediaDevices.getDisplayMedia({ video: true });
         setScreenStream(screen);
         setIsScreenSharing(true);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = screen;
-        }
 
         const screenTrack = screen.getVideoTracks()[0];
         screenTrack.onended = () => {
@@ -312,6 +431,12 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
           if (sender) sender.replaceTrack(screenTrack);
         });
+
+        // Broadcast screen share active to students
+        api.sendOnlineClassSignal(classId, {
+          type: 'screen-share-status',
+          payload: { isSharing: true, by: user.name }
+        }).catch(() => {});
       } catch (err) {
         console.warn('Screen share cancelled or failed:', err);
       }
@@ -511,13 +636,79 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
       case 'hand-raised': {
         if (payload.isRaised) {
+          if (isTeacher) {
+            playHandRaiseChime();
+            setHandRaiseNotification({
+              studentId: payload.studentId,
+              studentName: payload.studentName
+            });
+          }
           setRaisedHands(prev => {
             if (prev.some(h => h.studentId === payload.studentId)) return prev;
             return [...prev, { studentId: payload.studentId, studentName: payload.studentName, raisedAt: new Date() }];
           });
         } else {
           setRaisedHands(prev => prev.filter(h => h.studentId !== payload.studentId));
+          setHandRaiseNotification(prev => prev?.studentId === payload.studentId ? null : prev);
         }
+        break;
+      }
+
+      case 'remote-control': {
+        if (!isTeacher) {
+          const { action, by } = payload;
+          if (action === 'mute-audio' || action === 'mute-all') {
+            if (localStreamRef.current) {
+              const audioTrack = localStreamRef.current.getAudioTracks()[0];
+              if (audioTrack) {
+                audioTrack.enabled = false;
+                setIsMicOn(false);
+              }
+            }
+            setUserNotice(`Faculty (${by || 'Teacher'}) muted your microphone.`);
+          } else if (action === 'unmute-audio' || action === 'unmute-all') {
+            if (localStreamRef.current) {
+              const audioTrack = localStreamRef.current.getAudioTracks()[0];
+              if (audioTrack) {
+                audioTrack.enabled = true;
+                setIsMicOn(true);
+              }
+            }
+            setUserNotice(`Faculty (${by || 'Teacher'}) unmuted your microphone. You can now speak and ask doubts!`);
+          } else if (action === 'disable-video' || action === 'stop-all-video') {
+            if (localStreamRef.current) {
+              const videoTrack = localStreamRef.current.getVideoTracks()[0];
+              if (videoTrack) {
+                videoTrack.enabled = false;
+                setIsVideoOn(false);
+              }
+            }
+            setUserNotice(`Faculty (${by || 'Teacher'}) turned off your camera.`);
+          } else if (action === 'enable-video' || action === 'enable-all-video') {
+            if (localStreamRef.current) {
+              const videoTrack = localStreamRef.current.getVideoTracks()[0];
+              if (videoTrack) {
+                videoTrack.enabled = true;
+                setIsVideoOn(true);
+              }
+            }
+            setUserNotice(`Faculty (${by || 'Teacher'}) requested you to turn on your camera.`);
+          }
+        }
+        break;
+      }
+
+      case 'screen-share-status': {
+        setTeacherScreenSharing(payload.isSharing);
+        setRemoteStreams(prev => {
+          const copy = { ...prev };
+          for (const [id, peer] of Object.entries(copy)) {
+            if (peer.role === 'teacher') {
+              copy[id] = { ...peer, version: Date.now() };
+            }
+          }
+          return copy;
+        });
         break;
       }
 
@@ -532,17 +723,37 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   };
 
+  const handleRemoteControl = async (targetId, action) => {
+    if (!isTeacher) return;
+    try {
+      await api.sendOnlineClassSignal(classId, {
+        to: targetId || 'all',
+        type: 'remote-control',
+        payload: { action, by: user.name }
+      });
+    } catch (err) {
+      console.warn('Remote control error:', err);
+    }
+  };
+
   // ───────────────────────────────────────────────────────────────────────────
-  // 4. Fast Polling Signal Loop (900ms for swift SDP handshake)
+  // 4. Sequential Safe Fast Polling Signal Loop
   // ───────────────────────────────────────────────────────────────────────────
   const startSignalLoop = () => {
     signalIntervalRef.current = setInterval(async () => {
       try {
-        const res = await api.getOnlineClassSignals(classId, lastSignalTimeRef.current);
+        const res = await api.getOnlineClassSignals(classId, lastSignalTimeRef.current, lastSeqRef.current);
         if (res.signals && res.signals.length > 0) {
           for (const sig of res.signals) {
+            if (sig.id && processedSignalIds.current.has(sig.id)) continue;
+            if (sig.id) processedSignalIds.current.add(sig.id);
+
             await handleIncomingSignal(sig);
-            if (sig.timestamp > lastSignalTimeRef.current) {
+
+            if (sig.seq && sig.seq > lastSeqRef.current) {
+              lastSeqRef.current = sig.seq;
+            }
+            if (sig.timestamp && sig.timestamp > lastSignalTimeRef.current) {
               lastSignalTimeRef.current = sig.timestamp;
             }
           }
@@ -550,7 +761,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       } catch (err) {
         // Silent poll error
       }
-    }, 900);
+    }, 450);
   };
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -618,6 +829,12 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       const res = await api.toggleOnlineClassRaiseHand(classId);
       setIsHandRaised(res.isRaised);
       if (res.raisedHands) setRaisedHands(res.raisedHands);
+      if (res.isRaised) {
+        playHandRaiseChime();
+        setUserNotice('Hand raised! Faculty has been notified with audio alert.');
+      } else {
+        setUserNotice('Hand lowered.');
+      }
     } catch (err) {
       console.error('Failed to toggle hand raise:', err);
     }
@@ -700,6 +917,13 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     );
   }
 
+  // For students: identify the teacher peer stream
+  const teacherPeer = Object.entries(remoteStreams).find(([id, r]) => r.role === 'teacher') ||
+    (!isTeacher && Object.entries(remoteStreams).length > 0 ? Object.entries(remoteStreams)[0] : null);
+
+  // For teacher: identify all student peer streams
+  const studentPeers = Object.entries(remoteStreams).filter(([id, r]) => r.role !== 'teacher');
+
   return (
     <div className="relative w-full h-[88vh] min-h-[580px] bg-[#020813] text-white rounded-2xl sm:rounded-3xl border border-[#133966] overflow-hidden flex flex-col shadow-2xl">
       
@@ -757,11 +981,51 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             </div>
           )}
 
-          {/* Teacher: Connected count */}
+          {/* Teacher: Connected count & Global Controls */}
           {isTeacher && (
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
-              <Users className="w-3.5 h-3.5 text-[#00C49F]" />
-              <span>{participantsList.length} Connected</span>
+            <div className="flex items-center gap-1.5">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
+                <Users className="w-3.5 h-3.5 text-[#00C49F]" />
+                <span>{participantsList.length} Connected</span>
+              </div>
+
+              {/* Mute All / Unmute All */}
+              <button
+                onClick={() => handleRemoteControl('all', 'mute-all')}
+                className="px-2.5 py-1 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1 shadow-sm transition-all"
+                title="Mute all students' microphones"
+              >
+                <MicOff className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Mute All</span>
+              </button>
+
+              <button
+                onClick={() => handleRemoteControl('all', 'unmute-all')}
+                className="px-2.5 py-1 rounded-xl bg-[#00a896]/20 hover:bg-[#00a896]/30 border border-[#00a896]/40 text-[#00C49F] text-xs font-bold flex items-center gap-1 shadow-sm transition-all"
+                title="Unmute all students' microphones"
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Unmute All</span>
+              </button>
+
+              {/* Video Off All / Enable All Video */}
+              <button
+                onClick={() => handleRemoteControl('all', 'stop-all-video')}
+                className="hidden lg:flex px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold items-center gap-1"
+                title="Turn off all students' video"
+              >
+                <VideoOff className="w-3.5 h-3.5" />
+                <span>Stop Video All</span>
+              </button>
+
+              <button
+                onClick={() => handleRemoteControl('all', 'enable-all-video')}
+                className="hidden lg:flex px-2 py-1 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] text-xs font-bold items-center gap-1"
+                title="Enable all students' video"
+              >
+                <Video className="w-3.5 h-3.5" />
+                <span>Enable Video All</span>
+              </button>
             </div>
           )}
 
@@ -782,7 +1046,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         
         {/* Stream Error alert banner if camera was denied */}
         {streamError && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 max-w-md bg-amber-500/90 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl shadow-xl flex items-center gap-2">
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 max-w-md bg-amber-500/90 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl shadow-xl flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>{streamError}</span>
             <button onClick={() => setStreamError('')} className="ml-auto p-1 text-slate-900 hover:text-black">
@@ -791,80 +1055,209 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           </div>
         )}
 
-        {/* Video Grid View (Responsive grid for mobile, tablet, and desktop) */}
-        <div className="flex-1 bg-[#020813] p-2 sm:p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3 auto-rows-fr">
+        {/* Hand Raise Alert Banner for Teacher */}
+        {isTeacher && handRaiseNotification && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-3 border border-amber-300 animate-in slide-in-from-top duration-200">
+            <Hand className="w-4 h-4 animate-bounce" />
+            <span className="text-xs font-black">
+              {handRaiseNotification.studentName} has a doubt!
+            </span>
+            <button
+              onClick={() => {
+                handleRemoteControl(handRaiseNotification.studentId, 'unmute-audio');
+                setHandRaiseNotification(null);
+              }}
+              className="px-3 py-1 bg-[#040d1a] hover:bg-black text-[#00C49F] font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1"
+            >
+              <Mic className="w-3.5 h-3.5 text-[#00C49F]" />
+              <span>Unmute to Ask Doubts</span>
+            </button>
+            <button
+              onClick={() => {
+                lowerStudentHand(handRaiseNotification.studentId);
+                setHandRaiseNotification(null);
+              }}
+              className="p-1 text-slate-900 hover:text-black rounded-lg"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* User Notification Pill (for student when muted/unmuted) */}
+        {!isTeacher && userNotice && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-cyan-300 px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 border border-[#00C49F] text-xs font-bold animate-in fade-in duration-200">
+            <span>{userNotice}</span>
+            <button onClick={() => setUserNotice('')} className="p-1 text-slate-400 hover:text-white">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Main Video Presentation Stage */}
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-[#020813] p-2 sm:p-3">
           
-          {/* 1. Local Video Tile (User's own camera/screen) */}
-          <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg group">
-            {isVideoOn || isScreenSharing ? (
+          {/* 1. Main Stage / Hero Area */}
+          <div className="flex-1 relative rounded-2xl overflow-hidden border border-[#133966] bg-[#040d1a] flex items-center justify-center min-h-0">
+            
+            {/* If Teacher is sharing screen: show screen share full stage */}
+            {isTeacher && isScreenSharing && screenStream ? (
+              <div className="w-full h-full relative bg-black flex items-center justify-center">
+                <video
+                  ref={(el) => {
+                    screenShareVideoRef.current = el;
+                    if (el && screenStream && el.srcObject !== screenStream) {
+                      el.srcObject = screenStream;
+                      el.play().catch(e => console.warn('Screen play warning:', e));
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-contain"
+                />
+                <div className="absolute top-3 left-3 px-3 py-1 rounded-xl bg-cyan-950/85 border border-cyan-500/50 text-cyan-300 text-xs font-bold flex items-center gap-1.5 shadow-lg backdrop-blur-md">
+                  <ScreenShare className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span>Presenting Your Screen</span>
+                </div>
+              </div>
+            ) : isTeacher ? (
+              /* Teacher's Main Studio Canvas */
+              <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-[#071b34]/80 to-[#040d1a]">
+                <div className="w-16 sm:w-20 h-16 sm:h-20 rounded-3xl bg-gradient-to-tr from-[#00a896] to-[#00C49F] p-0.5 shadow-2xl flex items-center justify-center mb-3">
+                  <div className="w-full h-full bg-[#040d1a] rounded-[22px] flex items-center justify-center text-[#00C49F]">
+                    <Video className="w-8 sm:w-10 h-8 sm:h-10" />
+                  </div>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  Live Lecture Studio · Division {classInfo?.division || user.division || 'A'}
+                </h3>
+                <p className="text-xs text-slate-300 max-w-md mt-1 leading-relaxed">
+                  Your live camera is actively broadcasting to all students. Click <strong>Share Screen</strong> below to project slides, IDEs, code editors, or notes to the entire class.
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <button
+                    onClick={toggleScreenShare}
+                    className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] font-black text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20 hover:scale-105 active:scale-95 transition-all"
+                  >
+                    <ScreenShare className="w-4 h-4" />
+                    <span>Share Screen with Class</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* STUDENT VIEW: ONLY TEACHER IS VISIBLE (whether teacher is sharing camera or screen) */
+              <div className="w-full h-full relative bg-black flex items-center justify-center">
+                {teacherPeer ? (
+                  <RemoteVideoTile
+                    peerId={teacherPeer[0]}
+                    remote={teacherPeer[1]}
+                    raisedHands={raisedHands}
+                    isMainStage={true}
+                    isScreenShareActive={teacherScreenSharing}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-6 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-[#071b34] border border-[#133966] flex items-center justify-center text-[#00C49F] mb-3 animate-pulse">
+                      <Video className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-base font-bold text-white">Connecting to Faculty Live Stream...</h3>
+                    <p className="text-xs text-slate-400 max-w-sm mt-1">
+                      Synchronizing lecture feed with {classInfo?.teacherName || 'Faculty'}. Audio and video are establishing.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+
+          {/* 2. FOR TEACHER ONLY: Students Visible in a Row (Filmstrip) */}
+          {isTeacher && (
+            <div className="h-32 sm:h-40 shrink-0 bg-[#040d1a]/95 border border-[#133966] rounded-2xl p-2.5 mt-2 flex flex-col justify-between">
+              <div className="flex items-center justify-between px-1 mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-[#00C49F]" />
+                    Students in Class ({studentPeers.length})
+                  </span>
+                  {studentPeers.length > 0 && (
+                    <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
+                      Live Video Streamed
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {classInfo?.division ? `Division ${classInfo.division}` : ''}
+                </span>
+              </div>
+
+              {/* Horizontal Scroll Row for Students */}
+              <div className="flex-1 flex overflow-x-auto gap-3 py-1 pr-48 sm:pr-60 scrollbar-thin">
+                {studentPeers.length === 0 ? (
+                  <div className="w-full flex items-center justify-center text-xs text-slate-500 border border-dashed border-[#133966] rounded-xl px-4">
+                    Waiting for students of Division {classInfo?.division} to join. They will appear in this row automatically.
+                  </div>
+                ) : (
+                  studentPeers.map(([peerId, remote]) => (
+                    <div key={peerId} className="w-44 sm:w-52 h-full shrink-0">
+                      <RemoteVideoTile
+                        peerId={peerId}
+                        remote={remote}
+                        raisedHands={raisedHands}
+                        isMainStage={false}
+                        isTeacher={true}
+                        onRemoteControl={handleRemoteControl}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 3. FLOATING SELF-PREVIEW WINDOW (Picture-in-Picture at Right Bottom for BOTH) */}
+          <div className="absolute bottom-4 right-4 z-30 w-40 sm:w-52 h-28 sm:h-36 rounded-2xl border-2 border-[#00C49F] overflow-hidden shadow-2xl bg-[#071b34]/95 backdrop-blur-md group transition-all hover:scale-105">
+            {isVideoOn ? (
               <video
                 ref={(el) => {
                   localVideoRef.current = el;
-                  if (el && activeLocalStream && el.srcObject !== activeLocalStream) {
-                    el.srcObject = activeLocalStream;
-                    el.play().catch(e => console.warn('Local video play warning:', e));
+                  if (el && localStream && el.srcObject !== localStream) {
+                    el.srcObject = localStream;
+                    el.play().catch(e => console.warn('Preview play warning:', e));
                   }
                 }}
                 autoPlay
                 playsInline
                 muted
-                className={`w-full h-full object-cover ${isScreenSharing ? '' : '-scale-x-100'}`}
+                className="w-full h-full object-cover -scale-x-100"
               />
             ) : (
-              <div className="flex flex-col items-center justify-center p-4">
-                <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-[#040d1a] border-2 border-[#00C49F] flex items-center justify-center text-lg sm:text-xl font-black text-white shadow-md">
-                  {user.name?.charAt(0)}
+              <div className="w-full h-full flex flex-col items-center justify-center p-2 bg-[#040d1a]">
+                <div className="w-10 h-10 rounded-full bg-[#071b34] border border-[#00C49F] flex items-center justify-center font-bold text-white text-sm">
+                  {user?.name?.charAt(0) || 'U'}
                 </div>
-                <span className="text-xs font-semibold text-slate-400 mt-2">Camera Off</span>
+                <span className="text-[10px] text-slate-400 mt-1 font-mono">Camera Off</span>
               </div>
             )}
 
-            {/* Bottom Overlay Label */}
-            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
-              <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
-                <span className="truncate max-w-[120px]">{user.name} (You)</span>
-                {isTeacher && <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Host</span>}
-                {isHandRaised && !isTeacher && <span className="text-xs">✋</span>}
+            {/* Self Preview Label */}
+            <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
+              <div className="px-2 py-0.5 rounded-md bg-[#040d1a]/90 border border-[#133966] text-[10px] font-bold text-white flex items-center gap-1">
+                <span className="truncate max-w-[85px]">{user.name}</span>
+                <span className="text-[9px] text-[#00C49F]">(You)</span>
+                {isHandRaised && !isTeacher && <span>✋</span>}
               </div>
               <div className="flex items-center gap-1">
                 {!isMicOn && (
-                  <div className="p-1 rounded-md bg-rose-500/80 text-white" title="Muted">
-                    <MicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  </div>
-                )}
-                {isScreenSharing && (
-                  <div className="p-1 rounded-md bg-cyan-500/80 text-white" title="Presenting Screen">
-                    <ScreenShare className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  </div>
+                  <span className="p-0.5 rounded bg-rose-500 text-white">
+                    <MicOff className="w-2.5 h-2.5" />
+                  </span>
                 )}
               </div>
             </div>
           </div>
-
-          {/* 2. Remote Video Tiles for Connected Peers */}
-          {Object.entries(remoteStreams).map(([peerId, remote]) => (
-            <RemoteVideoTile
-              key={peerId}
-              peerId={peerId}
-              remote={remote}
-              raisedHands={raisedHands}
-            />
-          ))}
-
-          {/* Placeholder if waiting for peers */}
-          {Object.keys(remoteStreams).length === 0 && (
-            <div className="relative rounded-2xl bg-[#040d1a]/70 border border-dashed border-[#133966] p-4 sm:p-6 flex flex-col items-center justify-center text-center">
-              <Users className="w-8 h-8 sm:w-10 sm:h-10 text-cyan-400/40 mb-2" />
-              <h4 className="text-xs font-bold text-slate-300">
-                {isTeacher ? 'Waiting for Division Students to Join...' : 'Connected to Live Session'}
-              </h4>
-              <p className="text-[10px] sm:text-[11px] text-slate-500 max-w-xs mt-1">
-                {isTeacher
-                  ? `Students of Division ${classInfo?.division} can now see the live lecture alert and connect.`
-                  : 'Faculty media feed is synchronizing live stream.'}
-              </p>
-            </div>
-          )}
 
         </div>
 

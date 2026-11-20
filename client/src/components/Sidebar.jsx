@@ -83,8 +83,32 @@ export default function Sidebar({
   const sidebarContent = (
     <div className="flex flex-col h-full bg-[#040d1a] border-r border-[#133966] select-none">
       
+      {/* ── Top Header of Menu with Close Button at the RIGHT TOP ───────────── */}
+      <div className="p-3 border-b border-[#133966] bg-[#030914] flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-7 h-7 rounded-lg bg-[#071b34] border border-[#133966] p-0.5 flex items-center justify-center shrink-0">
+            <img src="/logo.jpg" alt="Logo" className="w-full h-full object-contain rounded" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-black text-white truncate">Navigation Menu</div>
+            <div className="text-[9px] text-[#00C49F] font-mono font-bold">{badge.label.toUpperCase()}</div>
+          </div>
+        </div>
+
+        {/* Close Button at the right top of the menu */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] text-slate-400 hover:text-white border border-[#133966] hover:border-rose-500/40 transition-colors shrink-0 shadow-sm"
+          title="Close Menu"
+          aria-label="Close Menu"
+        >
+          <X className="w-4 h-4 text-slate-300 hover:text-white" />
+        </button>
+      </div>
+
       {/* ── User Overview & Division Tag ──────────────────────────────────────── */}
-      <div className="p-4 border-b border-[#133966] bg-[#071b34]/40">
+      <div className="p-3.5 border-b border-[#133966] bg-[#071b34]/40">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-xl overflow-hidden border border-[#00C49F] bg-[#040d1a] shrink-0">
             <img
@@ -200,7 +224,7 @@ export default function Sidebar({
     <>
       {/* ── Desktop Collapsible Sidebar (Toggles on ALL screens) ──────────────── */}
       <aside
-        className={`hidden md:flex flex-col shrink-0 border-r border-[#133966] bg-[#040d1a] sticky top-16 sm:top-20 h-[calc(100vh-4rem)] sm:h-[calc(100vh-5rem)] z-30 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
+        className={`hidden md:flex flex-col shrink-0 border-r border-[#133966] bg-[#040d1a] sticky top-[84px] sm:top-[92px] h-[calc(100vh-84px)] sm:h-[calc(100vh-92px)] z-30 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
           isOpen ? 'w-64 lg:w-72 opacity-100' : 'w-0 opacity-0 border-r-0 pointer-events-none'
         }`}
       >
@@ -219,17 +243,6 @@ export default function Sidebar({
             className="w-72 sm:w-80 h-full bg-[#040d1a] shadow-2xl flex flex-col animate-in slide-in-from-left duration-200 relative"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Close Button at top */}
-            <div className="absolute top-3 right-3 z-20">
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-1.5 rounded-xl bg-[#071b34] text-slate-400 hover:text-white border border-[#133966]"
-                title="Close Menu"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
             {sidebarContent}
           </div>
         </div>

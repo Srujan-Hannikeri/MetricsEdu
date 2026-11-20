@@ -223,8 +223,8 @@ export const api = {
     request(`/online-class/session/${sessionId}/heartbeat`, { method: 'POST', body: JSON.stringify({ deltaSeconds }) }),
   sendOnlineClassSignal: (sessionId, payload) =>
     request(`/online-class/session/${sessionId}/signal`, { method: 'POST', body: JSON.stringify(payload) }),
-  getOnlineClassSignals: (sessionId, since = 0) =>
-    request(`/online-class/session/${sessionId}/signals?since=${since}`),
+  getOnlineClassSignals: (sessionId, since = 0, sinceSeq = 0) =>
+    request(`/online-class/session/${sessionId}/signals?since=${since}&sinceSeq=${sinceSeq}`),
   sendOnlineClassMessage: (sessionId, text) =>
     request(`/online-class/session/${sessionId}/message`, { method: 'POST', body: JSON.stringify({ text }) }),
   toggleOnlineClassRaiseHand: (sessionId) =>

@@ -116,39 +116,22 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
 
   return (
     <header className="sticky top-0 z-40 w-full bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] shadow-xl">
-      <div className="max-w-7xl mx-auto min-w-0 px-3 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-2">
+      {/* Top Header Row: Logo & Brand at far Left, Name & Sign Out at far Right */}
+      <div className="max-w-7xl mx-auto min-w-0 px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-3">
         
-        {/* Left: Mobile Hamburger Button & Brand Logo */}
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
-          
-          {/* Universal Sidebar & Menu Toggle Button (All Devices) */}
-          {user && (
-            <button
-              type="button"
-              onClick={onToggleMobileMenu || (() => setShowMobileMenu(!showMobileMenu))}
-              aria-label="Toggle navigation menu"
-              className="flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] transition-all shadow-sm group"
-              title={(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? 'Collapse Menu' : 'Expand Menu'}
-            >
-              {(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? (
-                <X className="w-5 h-5 text-slate-300 group-hover:text-white" />
-              ) : (
-                <Menu className="w-5 h-5 text-[#00C49F] group-hover:scale-105 transition-transform" />
-              )}
-            </button>
-          )}
-
+        {/* Left: Brand Logo & Title */}
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
           {/* Crisp High-Res Logo Container */}
           <div className="relative group shrink-0">
-            <div className="h-10 w-10 sm:h-14 sm:w-auto rounded-xl bg-[#071b34] border border-[#133966] p-1 flex items-center justify-center shadow-lg hover:border-[#00C49F] transition-colors">
+            <div className="h-9 w-9 sm:h-11 sm:w-11 rounded-xl bg-[#071b34] border border-[#133966] p-1 flex items-center justify-center shadow-lg hover:border-[#00C49F] transition-colors">
               <img
                 src="/logo.jpg"
                 alt="MetricsEdu Logo"
-                className="h-8 w-8 sm:h-12 sm:w-auto object-contain rounded-lg"
+                className="h-7 w-7 sm:h-9 sm:w-9 object-contain rounded-lg"
                 style={{ imageRendering: '-webkit-optimize-contrast' }}
               />
             </div>
-            <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#00C49F] border-2 border-[#040d1a] rounded-full" />
+            <span className="absolute -bottom-1 -right-1 w-3 h-3 bg-[#00C49F] border-2 border-[#040d1a] rounded-full" />
           </div>
 
           <div className="min-w-0">
@@ -166,27 +149,27 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
           </div>
         </div>
 
-        {/* User Status / Role / Interactive Profile Pill */}
+        {/* Right: User Status / Name & Direct Sign Out Button towards Right */}
         {user ? (
-          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3 ml-auto">
             {/* Live Clock (Desktop only) */}
-            <div className="hidden sm:flex flex-col items-end px-3 py-1.5 rounded-xl bg-[#071b34] border border-[#133966]">
-              <div className="text-sm font-black font-mono text-[#00C49F] tracking-widest leading-none">
+            <div className="hidden lg:flex flex-col items-end px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966]">
+              <div className="text-xs font-black font-mono text-[#00C49F] tracking-widest leading-none">
                 {timeStr}
               </div>
-              <div className="text-[10px] text-slate-400 font-mono mt-0.5">{dateStr}</div>
+              <div className="text-[9px] text-slate-400 font-mono mt-0.5">{dateStr}</div>
             </div>
 
-            {/* Clickable Profile Pill (Opens Profile Modal & Sign Out) */}
+            {/* User Profile Pill */}
             <button
               type="button"
               onClick={() => setShowProfileModal(true)}
-              aria-label="Open profile and sign out"
-              className="flex shrink-0 items-center gap-2 sm:gap-2.5 p-1.5 sm:px-3.5 sm:py-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] transition-all group shadow-sm text-left"
-              title="Click to view profile & sign out"
+              aria-label="Open profile"
+              className="flex shrink-0 items-center gap-2 sm:gap-2.5 p-1 sm:px-3 sm:py-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] transition-all group shadow-sm text-left"
+              title="Click to view profile"
             >
               {user.profileImage ? (
-                <div className="w-7 h-7 sm:w-6 sm:h-6 rounded-lg overflow-hidden border border-[#00C49F] shrink-0 bg-[#040d1a]">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg overflow-hidden border border-[#00C49F] shrink-0 bg-[#040d1a]">
                   <img
                     src={user.profileImage}
                     alt={user.name}
@@ -201,33 +184,92 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
               )}
               {/* Mobile name tag */}
               <div className="block sm:hidden leading-tight pr-0.5">
-                <span className="text-[11px] font-bold text-white block truncate max-w-[65px]">{user.name?.split(' ')[0]}</span>
+                <span className="text-[11px] font-bold text-white block truncate max-w-[70px]">{user.name?.split(' ')[0]}</span>
                 <span className={`text-[9px] font-mono px-1 py-0 rounded border ${badge.color} block text-center truncate`}>
                   {badge.label.split(' ')[0]}
                 </span>
               </div>
               <div className="hidden sm:block leading-tight">
                 <div className="font-bold text-white flex items-center gap-1.5 text-xs">
-                  <span className="group-hover:text-[#00C49F] transition-colors">{user.name}</span>
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border ${badge.color}`}>
+                  <span className="group-hover:text-[#00C49F] transition-colors truncate max-w-[120px] lg:max-w-[160px]">{user.name}</span>
+                  <span className={`text-[9px] font-semibold px-1.5 py-0.2 rounded border ${badge.color}`}>
                     {badge.label}
                   </span>
                 </div>
-                <div className="text-slate-400 font-mono text-[11px] mt-0.5 flex items-center gap-1">
+                <div className="text-slate-400 font-mono text-[10px] mt-0.5 flex items-center gap-1">
                   <span className="text-slate-500">{badge.idLabel}</span>
-                  <span className="text-[#00C49F] font-bold">{badge.idVal || user.email}</span>
-                  <span className="text-[10px] text-slate-500 group-hover:text-[#00C49F] ml-1">▼</span>
+                  <span className="text-[#00C49F] font-bold truncate max-w-[100px] lg:max-w-[140px]">{badge.idVal || user.email}</span>
                 </div>
               </div>
             </button>
+
+            {/* Direct Sign Out Button towards right */}
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/40 hover:border-rose-500/60 transition-all font-bold text-xs shadow-sm group shrink-0"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
           </div>
         ) : (
-          <div className="shrink-0 text-[10px] sm:text-xs text-cyan-200/70 font-mono">
+          <div className="shrink-0 text-[10px] sm:text-xs text-cyan-200/70 font-mono ml-auto">
             Secured by JWT
           </div>
         )}
 
       </div>
+
+      {/* ── SUB-BAR: Hamburger Menu Button Down & Context Strip ──────────── */}
+      {user && (
+        <div className="border-t border-[#133966]/70 bg-[#030914] px-3 sm:px-6 lg:px-8 py-1.5 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onToggleMobileMenu || (() => setShowMobileMenu(!showMobileMenu))}
+              aria-label="Toggle navigation menu"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] transition-all text-xs font-bold shadow-sm group"
+              title={(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? 'Close Menu' : 'Open Menu'}
+            >
+              {(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? (
+                <>
+                  <X className="w-4 h-4 text-slate-300 group-hover:text-white" />
+                  <span className="text-slate-300 group-hover:text-white font-medium">Close Menu</span>
+                </>
+              ) : (
+                <>
+                  <Menu className="w-4 h-4 text-[#00C49F] group-hover:scale-105 transition-transform" />
+                  <span className="text-white font-medium">Menu</span>
+                </>
+              )}
+            </button>
+
+            <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
+              <span className="text-slate-500">Navigation:</span>
+              <span className="text-cyan-300 font-bold">{badge.label}</span>
+              {user.division && (
+                <span className="ml-1 px-1.5 py-0.2 rounded bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 text-[10px]">
+                  Div {user.division}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onOpenFeedback}
+              className="text-[11px] text-slate-400 hover:text-[#00C49F] flex items-center gap-1.5 transition-colors"
+              title="Feedback & Bug Report"
+            >
+              <Bug className="w-3.5 h-3.5 text-slate-500 hover:text-[#00C49F]" />
+              <span className="hidden sm:inline">Feedback</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── MOBILE HAMBURGER MENU DRAWER ────────────────────────────────────── */}
       {showMobileMenu && user && typeof document !== 'undefined' && createPortal(
@@ -239,22 +281,25 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
         >
           <div className="w-4/5 max-w-sm bg-[#071b34] border-r border-[#133966] h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-200 overflow-hidden">
             
-            {/* Drawer Header */}
-            <div className="p-4 border-b border-[#133966] flex items-center justify-between bg-[#040d1a]">
+            {/* Drawer Header with Close Button at RIGHT TOP */}
+            <div className="p-3.5 border-b border-[#133966] flex items-center justify-between bg-[#040d1a]">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#00a896]/20 border border-[#00a896]/40 p-1 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-xl bg-[#00a896]/20 border border-[#00a896]/40 p-1 flex items-center justify-center">
                   <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover rounded-lg" />
                 </div>
                 <div>
-                  <div className="text-sm font-black text-white">MetricsEdu</div>
-                  <div className="text-[9px] text-[#00C49F] font-mono font-bold">PAGE MENU</div>
+                  <div className="text-xs font-black text-white">MetricsEdu</div>
+                  <div className="text-[9px] text-[#00C49F] font-mono font-bold">NAVIGATION MENU</div>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowMobileMenu(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#0b2444] transition-colors"
+                className="p-1.5 rounded-xl bg-[#071b34] text-slate-400 hover:text-white hover:bg-[#0b2444] border border-[#133966] transition-colors"
+                title="Close Menu"
+                aria-label="Close Menu"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 

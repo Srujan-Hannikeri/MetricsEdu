@@ -4,9 +4,10 @@ const Course = require('../models/Course');
 const User = require('../models/User');
 
 // In-memory signaling cache for WebRTC offers, answers, and ice candidates
-// Format: classId -> [ { id, from, to, type, data, timestamp } ]
+// Format: classId -> [ { id, seq, from, to, type, data, timestamp } ]
 const signalQueues = new Map();
 const MAX_QUEUE_AGE_MS = 60 * 1000; // 1 minute signal retention
+let signalSequenceCounter = 1;
 
 // Periodic cleanup of stale signals
 setInterval(() => {
@@ -230,22 +231,23 @@ exports.sendSignal = async (req, res) => {
     const queue = signalQueues.get(classId);
     const signalMsg = {
       id: `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      seq: ++signalSequenceCounter,
       from,
       fromName,
       to: to || 'all',
-      type, // 'offer' | 'answer' | 'ice-candidate' | 'user-joined' | 'user-left' | 'screen-share'
+      type, // 'offer' | 'answer' | 'ice-candidate' | 'user-joined' | 'user-left' | 'screen-share' | 'remote-control' | 'hand-raised'
       payload,
       timestamp: Date.now()
     };
 
     queue.push(signalMsg);
 
-    // Keep max 200 signals per class
-    if (queue.length > 200) {
-      queue.splice(0, queue.length - 200);
+    // Keep max 300 signals per class
+    if (queue.length > 300) {
+      queue.splice(0, queue.length - 300);
     }
 
-    return res.json({ success: true, signalId: signalMsg.id });
+    return res.json({ success: true, signalId: signalMsg.id, seq: signalMsg.seq });
   } catch (err) {
     console.error('sendSignal error:', err);
     return res.status(500).json({ success: false, message: err.message });
@@ -253,25 +255,37 @@ exports.sendSignal = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. WebRTC Signaling: Get Signals (Poll for pending signals)
+// 6. WebRTC Signaling: Get Signals (Poll for pending signals with sequential safety)
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getSignals = async (req, res) => {
   try {
     const { classId } = req.params;
     const userId = req.user._id.toString();
+    const sinceSeq = parseInt(req.query.sinceSeq || '0', 10);
     const since = parseInt(req.query.since || '0', 10);
 
     const queue = signalQueues.get(classId) || [];
     // Deliver signals targeted to this user or to 'all', excluding self
-    const signals = queue.filter(
-      sig => sig.timestamp > since && sig.from !== userId && (sig.to === 'all' || sig.to === userId)
-    );
+    const signals = queue.filter(sig => {
+      const isForMe = sig.from !== userId && (sig.to === 'all' || sig.to === userId);
+      if (!isForMe) return false;
+      if (sinceSeq > 0) {
+        return (sig.seq || 0) > sinceSeq;
+      }
+      return sig.timestamp > since;
+    });
 
     return res.json({
       success: true,
       signals,
+      latestSeq: signalSequenceCounter,
       serverTime: Date.now()
     });
+  } catch (err) {
+    console.error('getSignals error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
   } catch (err) {
     console.error('getSignals error:', err);
     return res.status(500).json({ success: false, message: err.message });
@@ -393,6 +407,7 @@ exports.sendChatMessage = async (req, res) => {
     if (!signalQueues.has(classId)) signalQueues.set(classId, []);
     signalQueues.get(classId).push({
       id: `${Date.now()}_chat`,
+      seq: ++signalSequenceCounter,
       from: req.user._id.toString(),
       fromName: req.user.name,
       to: 'all',
@@ -445,6 +460,7 @@ exports.toggleRaiseHand = async (req, res) => {
     if (!signalQueues.has(classId)) signalQueues.set(classId, []);
     signalQueues.get(classId).push({
       id: `${Date.now()}_hand`,
+      seq: ++signalSequenceCounter,
       from: user._id.toString(),
       fromName: user.name,
       to: 'all',
@@ -640,6 +656,7 @@ exports.endClass = async (req, res) => {
     if (!signalQueues.has(classId)) signalQueues.set(classId, []);
     signalQueues.get(classId).push({
       id: `${Date.now()}_ended`,
+      seq: ++signalSequenceCounter,
       from: teacherId.toString(),
       fromName: req.user.name,
       to: 'all',
