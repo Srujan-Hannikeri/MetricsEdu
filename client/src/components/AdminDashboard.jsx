@@ -263,6 +263,22 @@ export default function AdminDashboard({ user }) {
     ) || null;
   };
 
+  // Listen for mobile hamburger menu tab navigation events
+  useEffect(() => {
+    const handleNav = (e) => {
+      if (e.detail?.tab) {
+        setActivePage(e.detail.tab);
+        setBanner({ type: '', msg: '' });
+      }
+    };
+    window.addEventListener('metricsedu:navigate-tab', handleNav);
+    return () => window.removeEventListener('metricsedu:navigate-tab', handleNav);
+  }, []);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('metricsedu:tab-changed', { detail: { tab: activePage } }));
+  }, [activePage]);
+
   useEffect(() => {
     if (activePage === 'timetable' || activePage === 'schedule-setup') {
       loadSemesterConfigs();

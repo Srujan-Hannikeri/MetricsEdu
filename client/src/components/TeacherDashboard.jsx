@@ -3,7 +3,7 @@ import {
   Camera, Upload, CheckCircle2, XCircle, AlertCircle, Users,
   Sparkles, Download, RefreshCw, Eye, BookOpen, Clock, FileSpreadsheet,
   FileText, Calendar, Lock, Unlock, UserCheck, ShieldCheck, Info, ChevronRight, Megaphone,
-  Award, TrendingUp
+  Award, TrendingUp, Video
 } from 'lucide-react';
 import { api } from '../services/api';
 import { downloadAttendance } from '../utils/exportUtils';
@@ -11,6 +11,8 @@ import TimetableTable from './TimetableTable';
 import AcademicHub from './AcademicHub';
 import TeacherMarksEntry from './TeacherMarksEntry';
 import MarksOverviewPage from './MarksOverviewPage';
+import OnlineClassesManager from './OnlineClassesManager';
+import OnlineClassRoom from './OnlineClassRoom';
 
 const TIME_SLOTS = [
   '08:30 AM - 09:25 AM', '09:25 AM - 10:20 AM', '10:50 AM - 11:45 AM',
@@ -19,6 +21,16 @@ const TIME_SLOTS = [
 
 export default function TeacherDashboard({ user }) {
   const [activeTab, setActiveTab] = useState('my-classes');
+  const [liveOnlineRoom, setLiveOnlineRoom] = useState(null);
+
+  // Listen for mobile hamburger menu tab navigation events
+  useEffect(() => {
+    const handleNav = (e) => {
+      if (e.detail?.tab) setActiveTab(e.detail.tab);
+    };
+    window.addEventListener('metricsedu:navigate-tab', handleNav);
+    return () => window.removeEventListener('metricsedu:navigate-tab', handleNav);
+  }, []);
 
   // ── My Assigned Classes (from timetable) ───────────────────────────────────
   const [assignedSlots, setAssignedSlots] = useState([]);       // ALL timetable slots for this teacher
@@ -311,6 +323,22 @@ export default function TeacherDashboard({ user }) {
     (!activeTimetableCohort || getTimetableCohort(slot) === activeTimetableCohort)
   );
 
+  if (liveOnlineRoom) {
+    return (
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <OnlineClassRoom
+          classId={liveOnlineRoom._id || liveOnlineRoom.sessionId || liveOnlineRoom}
+          user={user}
+          onLeave={() => setLiveOnlineRoom(null)}
+          onClassEnded={() => {
+            setLiveOnlineRoom(null);
+            loadPastSessions();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
 
@@ -327,6 +355,7 @@ export default function TeacherDashboard({ user }) {
         <div className="mt-4 w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
           <div className="flex w-max min-w-full items-center gap-1">
           {[
+            { id: 'online-class', label: '🎥 Online Classes (WebRTC)', icon: Video },
             { id: 'my-classes', label: 'My Assigned Classes', icon: BookOpen },
             { id: 'take-attendance', label: 'Take Attendance', icon: Camera },
             { id: 'marks-entry', label: 'Exam Marks Entry', icon: Award },
@@ -911,6 +940,12 @@ export default function TeacherDashboard({ user }) {
         </div>
       )}
 
+      {activeTab === 'online-class' && (
+        <OnlineClassesManager
+          user={user}
+          onJoinClass={(liveSession) => setLiveOnlineRoom(liveSession)}
+        />
+      )}
       {activeTab === 'marks-entry' && <TeacherMarksEntry user={user} />}
       {activeTab === 'marks-overview' && <MarksOverviewPage user={user} isAdmin={false} />}
       {activeTab === 'calendar' && <AcademicHub user={user} page="calendar" />}

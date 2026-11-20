@@ -2,15 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, Camera, CheckCircle2, AlertTriangle, Clock, 
   BookOpen, ShieldCheck, Upload, RefreshCw, UserCheck, AlertCircle, ChevronDown, ChevronUp, Calendar, Megaphone,
-  Award
+  Award, Video
 } from 'lucide-react';
 import { api } from '../services/api';
 import TimetableTable from './TimetableTable';
 import AcademicHub from './AcademicHub';
 import StudentMarksAnalyticsModal from './StudentMarksAnalyticsModal';
+import OnlineClassesManager from './OnlineClassesManager';
+import OnlineClassRoom from './OnlineClassRoom';
 
 export default function StudentDashboard({ user, onUserUpdated }) {
   const [activeTab, setActiveTab] = useState('attendance'); // 'attendance' | 'timetable'
+  const [liveOnlineRoom, setLiveOnlineRoom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState(null);
   const [registeringFace, setRegisteringFace] = useState(false);
@@ -25,6 +28,19 @@ export default function StudentDashboard({ user, onUserUpdated }) {
   const [loadingTimetable, setLoadingTimetable] = useState(false);
 
   const fileInputRef = useRef(null);
+
+  // Listen for mobile hamburger menu tab navigation events
+  useEffect(() => {
+    const handleNav = (e) => {
+      if (e.detail?.tab) setActiveTab(e.detail.tab);
+    };
+    window.addEventListener('metricsedu:navigate-tab', handleNav);
+    return () => window.removeEventListener('metricsedu:navigate-tab', handleNav);
+  }, []);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('metricsedu:tab-changed', { detail: { tab: activeTab } }));
+  }, [activeTab]);
 
   useEffect(() => {
     loadDashboard();
@@ -160,6 +176,22 @@ export default function StudentDashboard({ user, onUserUpdated }) {
   // 3. Student explicitly opened manual uploader
   const shouldShowUploader = !isPhotoPresent || isConfidenceBelow40 || showManualUploader;
 
+  if (liveOnlineRoom) {
+    return (
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
+        <OnlineClassRoom
+          classId={liveOnlineRoom._id || liveOnlineRoom.sessionId || liveOnlineRoom}
+          user={user}
+          onLeave={() => setLiveOnlineRoom(null)}
+          onClassEnded={() => {
+            setLiveOnlineRoom(null);
+            loadDashboard();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-8">
       
@@ -253,6 +285,18 @@ export default function StudentDashboard({ user, onUserUpdated }) {
       {/* Student navigation (Horizontally Scrollable on Mobile) */}
       <div className="w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
         <div className="flex w-max min-w-full items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab('online-class')}
+            className={`whitespace-nowrap shrink-0 flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'online-class'
+                ? 'bg-gradient-to-r from-[#00a896] to-[#00C49F] text-[#040d1a] shadow-md shadow-teal-500/20'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Video className="w-4 h-4" />
+            🎥 Online Classes (WebRTC)
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('attendance')}
@@ -720,6 +764,12 @@ export default function StudentDashboard({ user, onUserUpdated }) {
     </div>
   )}
 
+  {activeTab === 'online-class' && (
+    <OnlineClassesManager
+      user={user}
+      onJoinClass={(liveSession) => setLiveOnlineRoom(liveSession)}
+    />
+  )}
   {activeTab === 'marks' && (
     <StudentMarksAnalyticsModal studentId={user?._id} studentInfo={user} isInline={true} />
   )}

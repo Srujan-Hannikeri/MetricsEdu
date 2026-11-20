@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ShieldCheck, GraduationCap, School, LogOut, Sparkles, UserCheck, 
-  X, Mail, User, BookOpen, CheckCircle2, ChevronRight, Clock, Bug
+  X, Mail, User, BookOpen, CheckCircle2, ChevronRight, Clock, Bug,
+  Menu, Video, Camera, Calendar, Megaphone, Award, TrendingUp, Layers, Users
 } from 'lucide-react';
 
 // Live clock hook
@@ -17,10 +18,17 @@ function useLiveClock() {
 
 export default function Navbar({ user, onLogout, onOpenFeedback }) {
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const now = useLiveClock();
 
   const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
   const dateStr = now.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+
+  // Handle navigation from mobile hamburger menu
+  const handleMobileNav = (tabId) => {
+    setShowMobileMenu(false);
+    window.dispatchEvent(new CustomEvent('metricsedu:navigate-tab', { detail: { tab: tabId } }));
+  };
 
   const getRoleBadge = (role) => {
     switch (role) {
@@ -62,14 +70,71 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
   const badge = getRoleBadge(user?.role);
   const IconComponent = badge.icon;
 
+  // Navigation items for the mobile hamburger drawer based on role
+  const getNavItems = () => {
+    if (user?.role === 'teacher') {
+      return [
+        { id: 'online-class', label: 'Online Classes (WebRTC)', desc: 'Live video lecture & 80% attendance', icon: Video, color: 'text-rose-400 bg-rose-500/15 border-rose-500/30' },
+        { id: 'my-classes', label: 'My Assigned Classes', desc: 'Schedule & daily lectures', icon: BookOpen, color: 'text-[#00C49F] bg-[#00a896]/15 border-[#00a896]/30' },
+        { id: 'take-attendance', label: 'Take Attendance', desc: 'Face vision photo scanner', icon: Camera, color: 'text-cyan-400 bg-cyan-500/15 border-cyan-500/30' },
+        { id: 'marks-entry', label: 'Exam Marks Entry', desc: 'IA & Semester evaluations', icon: Award, color: 'text-amber-400 bg-amber-500/15 border-amber-500/30' },
+        { id: 'marks-overview', label: 'Student Marks & Standings', desc: 'Performance analytics', icon: TrendingUp, color: 'text-purple-400 bg-purple-500/15 border-purple-500/30' },
+        { id: 'timetable', label: 'Weekly Timetable', desc: 'Complete division matrix', icon: Calendar, color: 'text-blue-400 bg-blue-500/15 border-blue-500/30' },
+        { id: 'calendar', label: 'Academic Calendar', desc: 'Events & holidays schedule', icon: Calendar, color: 'text-indigo-400 bg-indigo-500/15 border-indigo-500/30' },
+        { id: 'announcements', label: 'Announcements', desc: 'Campus bulletins & alerts', icon: Megaphone, color: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30' },
+        { id: 'materials', label: 'Study Materials', desc: 'Upload notes & syllabi', icon: BookOpen, color: 'text-teal-400 bg-teal-500/15 border-teal-500/30' },
+        { id: 'history', label: 'Attendance Sessions', desc: 'Past logs & PDF / CSV export', icon: Clock, color: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30' }
+      ];
+    } else if (user?.role === 'student') {
+      return [
+        { id: 'online-class', label: 'Online Classes (Live)', desc: 'Join live lecture & track 80%', icon: Video, color: 'text-rose-400 bg-rose-500/15 border-rose-500/30' },
+        { id: 'attendance', label: 'My Attendance & Subjects', desc: 'Attendance % & subject metrics', icon: BookOpen, color: 'text-[#00C49F] bg-[#00a896]/15 border-[#00a896]/30' },
+        { id: 'timetable', label: 'Weekly Timetable', desc: 'Class division matrix', icon: Calendar, color: 'text-blue-400 bg-blue-500/15 border-blue-500/30' },
+        { id: 'marks', label: 'My Marks & Report Card', desc: 'Internal & exam scores', icon: Award, color: 'text-amber-400 bg-amber-500/15 border-amber-500/30' },
+        { id: 'calendar', label: 'Academic Calendar', desc: 'Campus events & exams', icon: Calendar, color: 'text-indigo-400 bg-indigo-500/15 border-indigo-500/30' },
+        { id: 'announcements', label: 'Announcements', desc: 'Important campus notices', icon: Megaphone, color: 'text-yellow-400 bg-yellow-500/15 border-yellow-500/30' },
+        { id: 'materials', label: 'Study Materials', desc: 'Download notes & syllabus', icon: BookOpen, color: 'text-teal-400 bg-teal-500/15 border-teal-500/30' }
+      ];
+    } else if (user?.role === 'admin') {
+      return [
+        { id: 'overview', label: 'Institutional Overview', desc: 'Analytics & attendance rates', icon: ShieldCheck, color: 'text-rose-400 bg-rose-500/15 border-rose-500/30' },
+        { id: 'online-class', label: 'Online Classes Monitor', desc: 'Active virtual lectures & stats', icon: Video, color: 'text-purple-400 bg-purple-500/15 border-purple-500/30' },
+        { id: 'timetable', label: 'Timetable Matrix', desc: 'Edit & allocate classes', icon: Calendar, color: 'text-cyan-400 bg-cyan-500/15 border-cyan-500/30' },
+        { id: 'schedule-setup', label: 'Schedule Setup', desc: 'Semesters, branches & dates', icon: Layers, color: 'text-blue-400 bg-blue-500/15 border-blue-500/30' },
+        { id: 'divisions', label: 'Divisions Allocator', desc: 'Manage section division lists', icon: Users, color: 'text-teal-400 bg-teal-500/15 border-teal-500/30' },
+        { id: 'faculty-tracker', label: 'Faculty Tracker', desc: 'Lecturer live locations & gaps', icon: School, color: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30' },
+        { id: 'courses', label: 'Department Courses', desc: 'Curriculum & subject codes', icon: BookOpen, color: 'text-amber-400 bg-amber-500/15 border-amber-500/30' },
+        { id: 'users', label: 'User Directory', desc: 'Students, teachers & credentials', icon: UserCheck, color: 'text-indigo-400 bg-indigo-500/15 border-indigo-500/30' },
+        { id: 'marks-overview', label: 'Marks Analytics', desc: 'Student standings & stats', icon: TrendingUp, color: 'text-pink-400 bg-pink-500/15 border-pink-500/30' },
+        { id: 'calendar', label: 'Academic Calendar', desc: 'Campus events & holidays', icon: Calendar, color: 'text-indigo-400 bg-indigo-500/15 border-indigo-500/30' }
+      ];
+    }
+    return [];
+  };
+
+  const navItems = getNavItems();
+
   return (
     <header className="sticky top-0 z-40 w-full bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] shadow-xl">
       <div className="max-w-7xl mx-auto min-w-0 px-3 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-2">
         
-        {/* Brand & High-Definition Logo */}
+        {/* Left: Mobile Hamburger Button & Brand Logo */}
         <div className="flex min-w-0 items-center gap-2 sm:gap-3.5">
+          
+          {/* Mobile Hamburger Menu Toggle Button */}
+          {user && (
+            <button
+              type="button"
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              aria-label="Open navigation menu"
+              className="sm:hidden flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] transition-colors"
+            >
+              {showMobileMenu ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          )}
+
+          {/* Crisp High-Res Logo Container */}
           <div className="relative group shrink-0">
-            {/* Crisp High-Res Logo Container */}
             <div className="h-10 w-10 sm:h-14 sm:w-auto rounded-xl bg-[#071b34] border border-[#133966] p-1 flex items-center justify-center shadow-lg hover:border-[#00C49F] transition-colors">
               <img
                 src="/logo.jpg"
@@ -99,13 +164,14 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
         {/* User Status / Role / Interactive Profile Pill */}
         {user ? (
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            {/* Live Clock */}
+            {/* Live Clock (Desktop only) */}
             <div className="hidden sm:flex flex-col items-end px-3 py-1.5 rounded-xl bg-[#071b34] border border-[#133966]">
               <div className="text-sm font-black font-mono text-[#00C49F] tracking-widest leading-none">
                 {timeStr}
               </div>
               <div className="text-[10px] text-slate-400 font-mono mt-0.5">{dateStr}</div>
             </div>
+
             {/* Clickable Profile Pill (Opens Profile Modal & Sign Out) */}
             <button
               type="button"
@@ -158,7 +224,128 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
 
       </div>
 
-      {/* User Profile Modal with Academic Details & Signout Button (Rendered via Portal to ensure 100% visibility) */}
+      {/* ── MOBILE HAMBURGER MENU DRAWER ────────────────────────────────────── */}
+      {showMobileMenu && user && typeof document !== 'undefined' && createPortal(
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowMobileMenu(false);
+          }}
+          className="fixed inset-0 z-[9990] bg-[#040d1a]/85 backdrop-blur-md flex flex-col justify-start animate-in fade-in duration-200"
+        >
+          <div className="w-4/5 max-w-sm bg-[#071b34] border-r border-[#133966] h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-200 overflow-hidden">
+            
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-[#133966] flex items-center justify-between bg-[#040d1a]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#00a896]/20 border border-[#00a896]/40 p-1 flex items-center justify-center">
+                  <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover rounded-lg" />
+                </div>
+                <div>
+                  <div className="text-sm font-black text-white">MetricsEdu</div>
+                  <div className="text-[9px] text-[#00C49F] font-mono font-bold">PAGE MENU</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMobileMenu(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#0b2444] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* User Profile Mini Banner */}
+            <div className="p-4 border-b border-[#133966] bg-[#0b2444]/40 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl overflow-hidden border-2 border-[#00C49F] shrink-0 bg-[#040d1a]">
+                <img
+                  src={user.profileImage || '/logo.jpg'}
+                  alt={user.name}
+                  className="w-full h-full object-cover"
+                  onError={(e) => { e.target.src = '/logo.jpg'; }}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <span className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border ${badge.color}`}>
+                  {badge.label}
+                </span>
+                <div className="text-xs font-bold text-white truncate mt-0.5">{user.name}</div>
+                <div className="text-[10px] text-cyan-200/80 font-mono truncate">
+                  {badge.idLabel} {badge.idVal || user.email}
+                </div>
+              </div>
+            </div>
+
+            {/* Navigation Tab Links */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5 divide-y-0">
+              <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-2 py-1">
+                Dashboard Pages &amp; Tools
+              </div>
+
+              {navItems.map(item => {
+                const ItemIcon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleMobileNav(item.id)}
+                    className="w-full p-2.5 rounded-xl hover:bg-[#0b2444] border border-transparent hover:border-[#133966] transition-all flex items-center justify-between text-left group"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`p-1.5 rounded-lg border ${item.color}`}>
+                        <ItemIcon className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-100 group-hover:text-[#00C49F] truncate">
+                          {item.label}
+                        </div>
+                        <div className="text-[9px] text-slate-400 truncate">
+                          {item.desc}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-[#00C49F] shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Drawer Footer Actions */}
+            <div className="p-3 border-t border-[#133966] bg-[#040d1a] space-y-2">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono px-1">
+                <span>{timeStr}</span>
+                <span>{dateStr}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMobileMenu(false);
+                    if (onOpenFeedback) onOpenFeedback();
+                  }}
+                  className="px-2.5 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[11px] font-bold flex items-center justify-center gap-1.5"
+                >
+                  <Bug className="w-3.5 h-3.5" />
+                  <span>Feedback</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMobileMenu(false);
+                    onLogout();
+                  }}
+                  className="px-2.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-[11px] font-bold flex items-center justify-center gap-1.5"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── USER PROFILE MODAL ──────────────────────────────────────────────── */}
       {showProfileModal && user && typeof document !== 'undefined' && createPortal(
         <div
           onClick={(e) => {
@@ -251,7 +438,7 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
                 </div>
               )}
 
-              {/* Biometrics ONLY for Students (PER REQUIREMENT: Removed for Admin & Teachers) */}
+              {/* Biometrics ONLY for Students */}
               {user.role === 'student' && (
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#040d1a] border border-[#133966]">
                   <span className="text-slate-400">Biometric Recognition:</span>

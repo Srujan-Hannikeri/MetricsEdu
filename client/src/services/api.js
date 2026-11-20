@@ -209,5 +209,32 @@ export const api = {
     if (paramsObj.search) params.append('search', paramsObj.search);
     return request(`/marks/overview?${params.toString()}`);
   },
-  getStudentMarksHistory: (studentId) => request(`/marks/student/${studentId}`)
+  getStudentMarksHistory: (studentId) => request(`/marks/student/${studentId}`),
+
+  // ─── Online Classes & WebRTC Attendance ───────────────────────────────────
+  startOnlineClass: (payload) => request('/online-class/start', { method: 'POST', body: JSON.stringify(payload) }),
+  getActiveOnlineClass: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/online-class/active${q ? '?' + q : ''}`);
+  },
+  getOnlineClassById: (sessionId) => request(`/online-class/session/${sessionId}`),
+  joinOnlineClass: (sessionId) => request(`/online-class/session/${sessionId}/join`, { method: 'POST' }),
+  pingOnlineClassHeartbeat: (sessionId, deltaSeconds = 5) =>
+    request(`/online-class/session/${sessionId}/heartbeat`, { method: 'POST', body: JSON.stringify({ deltaSeconds }) }),
+  sendOnlineClassSignal: (sessionId, payload) =>
+    request(`/online-class/session/${sessionId}/signal`, { method: 'POST', body: JSON.stringify(payload) }),
+  getOnlineClassSignals: (sessionId, since = 0) =>
+    request(`/online-class/session/${sessionId}/signals?since=${since}`),
+  sendOnlineClassMessage: (sessionId, text) =>
+    request(`/online-class/session/${sessionId}/message`, { method: 'POST', body: JSON.stringify({ text }) }),
+  toggleOnlineClassRaiseHand: (sessionId) =>
+    request(`/online-class/session/${sessionId}/raise-hand`, { method: 'POST' }),
+  lowerOnlineClassHand: (sessionId, studentId) =>
+    request(`/online-class/session/${sessionId}/lower-hand`, { method: 'POST', body: JSON.stringify({ studentId }) }),
+  endOnlineClass: (sessionId) =>
+    request(`/online-class/session/${sessionId}/end`, { method: 'POST' }),
+  getOnlineClassHistory: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return request(`/online-class/history${q ? '?' + q : ''}`);
+  }
 };

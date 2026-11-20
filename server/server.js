@@ -13,6 +13,7 @@ const semesterRoutes = require('./routes/semesterRoutes');
 const campusRoutes = require('./routes/campusRoutes');
 const devRoutes = require('./routes/devRoutes');
 const marksRoutes = require('./routes/marksRoutes');
+const onlineClassRoutes = require('./routes/onlineClassRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -82,6 +83,7 @@ app.use('/api/semesters', semesterRoutes);
 app.use('/api/campus', campusRoutes);
 app.use('/api/dev', devRoutes);
 app.use('/api/marks', marksRoutes);
+app.use('/api/online-class', onlineClassRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {

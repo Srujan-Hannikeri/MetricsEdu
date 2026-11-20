@@ -1,20 +1,22 @@
 const app = require('../server/server');
 
 module.exports = (req, res) => {
-  const requestUrl = new URL(req.url, 'http://localhost');
-  const routes = requestUrl.searchParams.getAll('__metricsedu_route');
-  requestUrl.searchParams.delete('__metricsedu_route');
+  try {
+    const requestUrl = new URL(req.url, 'http://localhost');
+    const routeParam = requestUrl.searchParams.get('__metricsedu_route');
 
-  if (routes.length !== 1) {
-    return res.status(400).json({ success: false, message: 'Invalid API route.' });
+    if (routeParam !== null) {
+      requestUrl.searchParams.delete('__metricsedu_route');
+      const cleanRoute = routeParam.replace(/^\/+/, '');
+      const search = requestUrl.searchParams.toString();
+      req.url = `/api/${cleanRoute}${search ? `?${search}` : ''}`;
+    } else if (!req.url.startsWith('/api')) {
+      req.url = `/api${req.url.startsWith('/') ? '' : '/'}${req.url}`;
+    }
+
+    return app(req, res);
+  } catch (err) {
+    console.error('API Router Error:', err);
+    return app(req, res);
   }
-
-  const segments = routes[0].split('/');
-  if (segments.some(segment => segment === '.' || segment === '..')) {
-    return res.status(400).json({ success: false, message: 'Invalid API route.' });
-  }
-
-  const apiPath = `/api/${segments.map(encodeURIComponent).join('/')}`;
-  req.url = `${apiPath}${requestUrl.search}`;
-  return app(req, res);
 };
