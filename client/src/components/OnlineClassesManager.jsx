@@ -137,7 +137,7 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase tracking-wider font-mono">
-                  WebRTC Live Classroom
+                  Live Online Classroom
                 </span>
                 <span className="text-[10px] font-mono text-cyan-200">
                   Strict 80% Attendance Rule
@@ -316,7 +316,7 @@ export default function OnlineClassesManager({ user, onJoinClass }) {
               ) : (
                 <>
                   <Video className="w-4 h-4" />
-                  <span>Start WebRTC Online Class for Division {selectedDivision}</span>
+                  <span>Start Live Online Class for Division {selectedDivision}</span>
                 </>
               )}
             </button>

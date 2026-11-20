@@ -33,6 +33,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   // Peer connections: map of peerId -> RTCPeerConnection
   const [remoteStreams, setRemoteStreams] = useState({}); // peerId -> { stream, name, role }
   const peerConnectionsRef = useRef(new Map());
+  const iceCandidateQueueRef = useRef(new Map()); // Buffers candidates until remoteDescription is set
   const localStreamRef = useRef(null);
 
   // Interactive panels
@@ -41,7 +42,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
 
-  // Raise hand
+  // Raise hand (STUDENTS ONLY)
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [raisedHands, setRaisedHands] = useState([]);
 
@@ -78,10 +79,10 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         // 1. Join room on server
         const joinRes = await api.joinOnlineClass(classId);
         if (!mounted) return;
-        setClassInfo(joinRes.onlineClass);
-        setChatMessages(joinRes.onlineClass?.chatMessages || []);
-        setRaisedHands(joinRes.onlineClass?.raisedHands || []);
-        setParticipantsList(joinRes.onlineClass?.participants || []);
+        setClassInfo(joinRes.onlineClass || joinRes.session);
+        setChatMessages(joinRes.onlineClass?.chatMessages || joinRes.session?.chatMessages || []);
+        setRaisedHands(joinRes.onlineClass?.raisedHands || joinRes.session?.raisedHands || []);
+        setParticipantsList(joinRes.onlineClass?.participants || joinRes.session?.participants || []);
 
         // 2. Start local user media
         await initLocalMedia();
@@ -92,7 +93,20 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           payload: { role: user.role, name: user.name }
         });
 
-        // 4. Start heartbeat and signal polling loops
+        // If teacher, initiate call to any participants already in room
+        const activeParts = joinRes.onlineClass?.participants || joinRes.session?.participants || [];
+        if (isTeacher && activeParts.length > 0) {
+          for (const p of activeParts) {
+            const pId = (p.student?._id || p.student || '').toString();
+            if (pId && pId !== user._id.toString()) {
+              setTimeout(() => {
+                initiateCallToPeer(pId, p.name, 'student');
+              }, 400);
+            }
+          }
+        }
+
+        // 4. Start heartbeat and fast signal polling loops
         startHeartbeatLoop();
         startSignalLoop();
       } catch (err) {
@@ -120,8 +134,12 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
     }
+    if (screenStream) {
+      screenStream.getTracks().forEach(t => t.stop());
+    }
     peerConnectionsRef.current.forEach(pc => pc.close());
     peerConnectionsRef.current.clear();
+    iceCandidateQueueRef.current.clear();
   };
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -138,6 +156,13 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
       }
+
+      // Add tracks to any existing peer connections
+      peerConnectionsRef.current.forEach(pc => {
+        stream.getTracks().forEach(track => {
+          try { pc.addTrack(track, stream); } catch (e) {}
+        });
+      });
     } catch (err) {
       console.warn('Camera/Mic permission denied or unavailable:', err);
       setStreamError('Microphone or Camera access was denied or not found. You can still participate in audio/chat.');
@@ -174,8 +199,10 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   };
 
-  // Toggle Screen Sharing
+  // Toggle Screen Sharing (TEACHER ONLY)
   const toggleScreenShare = async () => {
+    if (!isTeacher) return; // Prevent student screen share
+
     if (isScreenSharing) {
       // Stop screen share, switch back to camera
       if (screenStream) {
@@ -220,8 +247,22 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   };
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 3. WebRTC Peer Connection Management
+  // 3. Robust Peer Connection Management with ICE Buffering
   // ───────────────────────────────────────────────────────────────────────────
+  const drainIceCandidates = async (peerId, pc) => {
+    const queue = iceCandidateQueueRef.current.get(peerId);
+    if (queue && queue.length > 0 && pc && pc.remoteDescription) {
+      for (const candidate of queue) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.warn('Drain candidate err:', e);
+        }
+      }
+      iceCandidateQueueRef.current.delete(peerId);
+    }
+  };
+
   const getOrCreatePeerConnection = (peerId, peerName, peerRole) => {
     if (peerConnectionsRef.current.has(peerId)) {
       return peerConnectionsRef.current.get(peerId);
@@ -232,22 +273,40 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     // Add local tracks to this peer connection
     const currentStream = screenStream || localStreamRef.current;
     if (currentStream) {
-      currentStream.getTracks().forEach(track => pc.addTrack(track, currentStream));
+      currentStream.getTracks().forEach(track => {
+        try { pc.addTrack(track, currentStream); } catch (e) {}
+      });
     }
 
     // Handle incoming remote stream tracks
     pc.ontrack = (event) => {
-      const [remoteStream] = event.streams;
-      if (remoteStream) {
-        setRemoteStreams(prev => ({
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        stream = new MediaStream();
+        if (event.track) stream.addTrack(event.track);
+      }
+      setRemoteStreams(prev => {
+        const existing = prev[peerId]?.stream;
+        if (existing && event.track && !existing.getTracks().includes(event.track)) {
+          existing.addTrack(event.track);
+          return {
+            ...prev,
+            [peerId]: {
+              stream: existing,
+              name: peerName || prev[peerId]?.name || 'Participant',
+              role: peerRole || prev[peerId]?.role || 'student'
+            }
+          };
+        }
+        return {
           ...prev,
           [peerId]: {
-            stream: remoteStream,
+            stream,
             name: peerName || 'Participant',
             role: peerRole || 'student'
           }
-        }));
-      }
+        };
+      });
     };
 
     // Send ICE candidates to peer
@@ -261,11 +320,20 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       }
     };
 
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        console.warn(`Peer ${peerId} connection disconnected/failed.`);
+        if (isTeacher) {
+          initiateCallToPeer(peerId, peerName, peerRole);
+        }
+      }
+    };
+
     peerConnectionsRef.current.set(peerId, pc);
     return pc;
   };
 
-  // Initiate call to a joined peer (typically Teacher offers to Students)
+  // Initiate call to a joined peer (Teacher offers to Students)
   const initiateCallToPeer = async (peerId, peerName, peerRole) => {
     try {
       const pc = getOrCreatePeerConnection(peerId, peerName, peerRole);
@@ -288,9 +356,15 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
     switch (type) {
       case 'user-joined': {
-        // A new user joined. If we are teacher (or first caller), initiate offer
         if (isTeacher) {
           await initiateCallToPeer(from, fromName, payload?.role);
+        } else if (payload?.role === 'teacher') {
+          // If teacher joined, notify them we are ready
+          await api.sendOnlineClassSignal(classId, {
+            to: from,
+            type: 'user-joined',
+            payload: { role: user.role, name: user.name }
+          });
         }
         break;
       }
@@ -299,6 +373,8 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         try {
           const pc = getOrCreatePeerConnection(from, fromName, payload?.senderRole);
           await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+          await drainIceCandidates(from, pc);
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
@@ -318,6 +394,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           const pc = peerConnectionsRef.current.get(from);
           if (pc && pc.signalingState !== 'stable') {
             await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+            await drainIceCandidates(from, pc);
           }
         } catch (err) {
           console.warn('Error handling answer from peer:', from, err);
@@ -326,13 +403,19 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       }
 
       case 'ice-candidate': {
-        try {
-          const pc = peerConnectionsRef.current.get(from);
-          if (pc && payload.candidate) {
+        const pc = peerConnectionsRef.current.get(from);
+        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+          try {
             await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+          } catch (err) {
+            console.warn('Error adding ICE candidate:', err);
           }
-        } catch (err) {
-          console.warn('Error adding ICE candidate:', err);
+        } else {
+          // Buffer candidate until remote description is set
+          if (!iceCandidateQueueRef.current.has(from)) {
+            iceCandidateQueueRef.current.set(from, []);
+          }
+          iceCandidateQueueRef.current.get(from).push(payload.candidate);
         }
         break;
       }
@@ -358,7 +441,6 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       }
 
       case 'class-ended': {
-        // Teacher has ended the class
         cleanup();
         if (onClassEnded) onClassEnded(payload);
         break;
@@ -370,7 +452,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   };
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 4. Polling Signal Loop
+  // 4. Fast Polling Signal Loop (900ms for swift SDP handshake)
   // ───────────────────────────────────────────────────────────────────────────
   const startSignalLoop = () => {
     signalIntervalRef.current = setInterval(async () => {
@@ -385,23 +467,22 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           }
         }
       } catch (err) {
-        // Silent failure for individual poll
+        // Silent poll error
       }
-    }, 1800);
+    }, 900);
   };
 
   // ───────────────────────────────────────────────────────────────────────────
   // 5. Heartbeat & Live 80% Attendance Tracking
   // ───────────────────────────────────────────────────────────────────────────
   const startHeartbeatLoop = () => {
-    // Immediate first ping
     sendHeartbeatPing();
-    heartbeatIntervalRef.current = setInterval(sendHeartbeatPing, 8000);
+    heartbeatIntervalRef.current = setInterval(sendHeartbeatPing, 7000);
   };
 
   const sendHeartbeatPing = async () => {
     try {
-      const res = await api.pingOnlineClassHeartbeat(classId, 8);
+      const res = await api.pingOnlineClassHeartbeat(classId, 7);
       if (res.classStatus === 'ended') {
         cleanup();
         if (onClassEnded) onClassEnded();
@@ -414,8 +495,9 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
       // Refresh participant list metadata
       const details = await api.getOnlineClassById(classId);
-      if (details.onlineClass?.participants) {
-        setParticipantsList(details.onlineClass.participants);
+      const parts = details.onlineClass?.participants || details.session?.participants;
+      if (parts) {
+        setParticipantsList(parts);
       }
     } catch (err) {
       console.warn('Heartbeat ping error:', err);
@@ -442,14 +524,15 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   };
 
-  // Auto scroll chat
   useEffect(() => {
     if (activePanel === 'chat' && chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages, activePanel]);
 
+  // Raise hand (STUDENTS ONLY)
   const toggleRaiseHand = async () => {
+    if (isTeacher) return;
     try {
       const res = await api.toggleOnlineClassRaiseHand(classId);
       setIsHandRaised(res.isRaised);
@@ -496,7 +579,6 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   };
 
-  // Fullscreen helper
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
@@ -505,7 +587,6 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   };
 
-  // Formatting helpers
   const formatTime = (secs) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -516,8 +597,8 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     return (
       <div className="min-h-[500px] flex flex-col items-center justify-center bg-[#040d1a] text-white p-6 rounded-3xl border border-[#133966]">
         <div className="w-12 h-12 rounded-2xl border-4 border-[#00C49F] border-t-transparent animate-spin mb-4" />
-        <h3 className="text-base font-bold">Connecting to WebRTC Online Class...</h3>
-        <p className="text-xs text-slate-400 mt-1">Establishing peer-to-peer audio & video media stream</p>
+        <h3 className="text-base font-bold">Connecting to Live Online Class...</h3>
+        <p className="text-xs text-slate-400 mt-1">Establishing real-time audio & video media stream</p>
       </div>
     );
   }
@@ -539,42 +620,42 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   }
 
   return (
-    <div className="relative w-full h-[88vh] min-h-[620px] bg-[#020813] text-white rounded-3xl border border-[#133966] overflow-hidden flex flex-col shadow-2xl">
+    <div className="relative w-full h-[88vh] min-h-[580px] bg-[#020813] text-white rounded-2xl sm:rounded-3xl border border-[#133966] overflow-hidden flex flex-col shadow-2xl">
       
       {/* ── Top Bar: Class info, Live badge, 80% Attendance progress ─────────── */}
-      <div className="shrink-0 h-16 bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] px-4 sm:px-6 flex items-center justify-between gap-3 z-20">
+      <div className="shrink-0 h-16 bg-[#040d1a]/95 backdrop-blur-md border-b border-[#133966] px-3 sm:px-6 flex items-center justify-between gap-2 z-20">
         
         {/* Left: Class details */}
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 text-xs font-black tracking-wider uppercase">
-            <Radio className="w-3.5 h-3.5 animate-pulse text-rose-500" />
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 text-[10px] sm:text-xs font-black tracking-wider uppercase shrink-0">
+            <Radio className="w-3 sm:w-3.5 h-3 sm:h-3.5 animate-pulse text-rose-500" />
             LIVE
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm sm:text-base font-extrabold text-white truncate flex items-center gap-2">
-              <span>{classInfo?.title || 'Live Online Class'}</span>
-              <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-md bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 shrink-0">
+            <h2 className="text-xs sm:text-base font-extrabold text-white truncate flex items-center gap-1.5 sm:gap-2">
+              <span className="truncate">{classInfo?.title || 'Live Online Class'}</span>
+              <span className="text-[10px] sm:text-[11px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded-md bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 shrink-0">
                 Div {classInfo?.division}
               </span>
             </h2>
-            <p className="text-[11px] text-cyan-200/70 truncate hidden sm:block">
+            <p className="text-[10px] sm:text-[11px] text-cyan-200/70 truncate hidden sm:block">
               {classInfo?.courseCode} · Faculty: {classInfo?.teacherName}
             </p>
           </div>
         </div>
 
         {/* Center / Right: Real-time Attendance & Elapsed Timer */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           
           {/* Class duration timer */}
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-mono font-bold text-slate-300">
+          <div className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-[11px] sm:text-xs font-mono font-bold text-slate-300">
             <Clock className="w-3.5 h-3.5 text-[#00C49F]" />
             <span>{formatTime(elapsedSeconds)}</span>
           </div>
 
           {/* Student's Live 80% Attendance Eligibility Badge */}
           {!isTeacher && (
-            <div className={`hidden md:flex items-center gap-2 px-3 py-1 rounded-xl border text-xs font-bold transition-all ${
+            <div className={`hidden sm:flex items-center gap-2 px-3 py-1 rounded-xl border text-xs font-bold transition-all ${
               studentStats.attendancePercentage >= 80
                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
                 : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
@@ -595,9 +676,9 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             </div>
           )}
 
-          {/* Teacher: Enrolled & Eligible counter */}
+          {/* Teacher: Connected count */}
           {isTeacher && (
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
               <Users className="w-3.5 h-3.5 text-[#00C49F]" />
               <span>{participantsList.length} Connected</span>
             </div>
@@ -606,7 +687,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#071b34] border border-transparent hover:border-[#133966] transition-all"
+            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#071b34] border border-transparent hover:border-[#133966] transition-all"
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -629,11 +710,11 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           </div>
         )}
 
-        {/* Video Grid View */}
-        <div className="flex-1 bg-[#020813] p-3 sm:p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 auto-rows-fr">
+        {/* Video Grid View (Responsive grid for mobile, tablet, and desktop) */}
+        <div className="flex-1 bg-[#020813] p-2 sm:p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-3 auto-rows-fr">
           
           {/* 1. Local Video Tile (User's own camera/screen) */}
-          <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[220px] shadow-lg group">
+          <div className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg group">
             {isVideoOn || isScreenSharing ? (
               <video
                 ref={localVideoRef}
@@ -644,7 +725,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
               />
             ) : (
               <div className="flex flex-col items-center justify-center p-4">
-                <div className="w-16 h-16 rounded-full bg-[#040d1a] border-2 border-[#00C49F] flex items-center justify-center text-xl font-black text-white shadow-md">
+                <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-[#040d1a] border-2 border-[#00C49F] flex items-center justify-center text-lg sm:text-xl font-black text-white shadow-md">
                   {user.name?.charAt(0)}
                 </div>
                 <span className="text-xs font-semibold text-slate-400 mt-2">Camera Off</span>
@@ -652,45 +733,46 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             )}
 
             {/* Bottom Overlay Label */}
-            <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-              <div className="px-2.5 py-1 rounded-lg bg-[#040d1a]/80 backdrop-blur-md border border-[#133966] text-xs font-bold text-white flex items-center gap-1.5">
-                <span>{user.name} (You)</span>
-                {isTeacher && <span className="text-[10px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Host</span>}
-                {isHandRaised && <span className="text-xs">✋</span>}
+            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+              <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
+                <span className="truncate max-w-[120px]">{user.name} (You)</span>
+                {isTeacher && <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Host</span>}
+                {isHandRaised && !isTeacher && <span className="text-xs">✋</span>}
               </div>
               <div className="flex items-center gap-1">
                 {!isMicOn && (
                   <div className="p-1 rounded-md bg-rose-500/80 text-white" title="Muted">
-                    <MicOff className="w-3.5 h-3.5" />
+                    <MicOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   </div>
                 )}
                 {isScreenSharing && (
-                  <div className="p-1 rounded-md bg-cyan-500/80 text-white" title="Presenting">
-                    <ScreenShare className="w-3.5 h-3.5" />
+                  <div className="p-1 rounded-md bg-cyan-500/80 text-white" title="Presenting Screen">
+                    <ScreenShare className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                   </div>
                 )}
               </div>
             </div>
           </div>
 
-          {/* 2. Remote Video Tiles for Peers */}
+          {/* 2. Remote Video Tiles for Connected Peers */}
           {Object.entries(remoteStreams).map(([peerId, remote]) => (
-            <div key={peerId} className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[220px] shadow-lg">
+            <div key={peerId} className="relative rounded-2xl bg-[#071b34] border border-[#133966] overflow-hidden flex items-center justify-center min-h-[190px] sm:min-h-[220px] shadow-lg">
               <video
                 autoPlay
                 playsInline
                 ref={(el) => {
                   if (el && remote.stream && el.srcObject !== remote.stream) {
                     el.srcObject = remote.stream;
+                    el.play().catch(e => console.warn('Autoplay error:', e));
                   }
                 }}
                 className="w-full h-full object-cover"
               />
-              <div className="absolute bottom-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-                <div className="px-2.5 py-1 rounded-lg bg-[#040d1a]/80 backdrop-blur-md border border-[#133966] text-xs font-bold text-white flex items-center gap-1.5">
-                  <span>{remote.name}</span>
+              <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between pointer-events-none">
+                <div className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-[#040d1a]/85 backdrop-blur-md border border-[#133966] text-[11px] sm:text-xs font-bold text-white flex items-center gap-1.5">
+                  <span className="truncate max-w-[120px]">{remote.name}</span>
                   {remote.role === 'teacher' && (
-                    <span className="text-[10px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Teacher</span>
+                    <span className="text-[9px] px-1 rounded bg-[#00a896]/30 text-[#00C49F]">Faculty</span>
                   )}
                   {raisedHands.some(h => h.studentId === peerId) && <span className="text-xs">✋</span>}
                 </div>
@@ -698,17 +780,17 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             </div>
           ))}
 
-          {/* Placeholder if no remote participants yet */}
+          {/* Placeholder if waiting for peers */}
           {Object.keys(remoteStreams).length === 0 && (
-            <div className="relative rounded-2xl bg-[#040d1a]/70 border border-dashed border-[#133966] p-6 flex flex-col items-center justify-center text-center">
-              <Users className="w-10 h-10 text-cyan-400/40 mb-2" />
+            <div className="relative rounded-2xl bg-[#040d1a]/70 border border-dashed border-[#133966] p-4 sm:p-6 flex flex-col items-center justify-center text-center">
+              <Users className="w-8 h-8 sm:w-10 sm:h-10 text-cyan-400/40 mb-2" />
               <h4 className="text-xs font-bold text-slate-300">
-                {isTeacher ? 'Waiting for Division Students to Join...' : 'Connected to Online Session'}
+                {isTeacher ? 'Waiting for Division Students to Join...' : 'Connected to Live Session'}
               </h4>
-              <p className="text-[11px] text-slate-500 max-w-xs mt-1">
+              <p className="text-[10px] sm:text-[11px] text-slate-500 max-w-xs mt-1">
                 {isTeacher
                   ? `Students of Division ${classInfo?.division} can now see the live lecture alert and connect.`
-                  : 'Faculty media feed is synchronizing via WebRTC.'}
+                  : 'Faculty media feed is synchronizing live stream.'}
               </p>
             </div>
           )}
@@ -717,7 +799,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
         {/* ── Slide-Out Sidebar: Chat Panel or Participants Panel ────────────── */}
         {activePanel !== 'none' && (
-          <aside className="w-80 sm:w-96 bg-[#040d1a] border-l border-[#133966] flex flex-col z-20 animate-in slide-in-from-right duration-200">
+          <aside className="w-full sm:w-80 md:w-96 bg-[#040d1a] border-l border-[#133966] flex flex-col z-20 animate-in slide-in-from-right duration-200 absolute sm:relative inset-y-0 right-0">
             
             {/* Panel Header */}
             <div className="h-14 border-b border-[#133966] px-4 flex items-center justify-between">
@@ -805,7 +887,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             {activePanel === 'participants' && (
               <div className="flex-1 p-3 overflow-y-auto space-y-2">
                 
-                {/* Raised Hands Section */}
+                {/* Raised Hands Section (Teacher can lower student hands) */}
                 {raisedHands.length > 0 && (
                   <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 mb-3 space-y-2">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
@@ -818,9 +900,9 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                         {isTeacher && (
                           <button
                             onClick={() => lowerStudentHand(rh.studentId)}
-                            className="text-[10px] text-amber-400 hover:text-white underline"
+                            className="text-[10px] text-amber-400 hover:text-white underline font-semibold"
                           >
-                            Lower
+                            Lower Hand
                           </button>
                         )}
                       </div>
@@ -879,88 +961,87 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       </div>
 
       {/* ── Bottom Control Dock: All Buttons & Interactive Functions ─────────── */}
-      <div className="shrink-0 h-20 bg-[#040d1a] border-t border-[#133966] px-4 sm:px-6 flex items-center justify-between gap-2 z-20">
+      <div className="shrink-0 h-18 sm:h-20 bg-[#040d1a] border-t border-[#133966] px-3 sm:px-6 flex items-center justify-between gap-2 z-20">
         
         {/* Left: Division & Live Status indicator */}
         <div className="hidden lg:flex items-center gap-2 text-xs text-slate-400 font-mono">
           <span className="w-2.5 h-2.5 rounded-full bg-[#00C49F] animate-ping" />
-          <span>WebRTC Connected · Div {classInfo?.division}</span>
+          <span>Live Connected · Div {classInfo?.division}</span>
         </div>
 
-        {/* Center: Essential Controls (Mic, Camera, ScreenShare, Raise Hand, Chat, Participants) */}
+        {/* Center: Essential Controls */}
         <div className="flex items-center gap-2 sm:gap-3 mx-auto">
           
           {/* Mic Toggle Button */}
           <button
             onClick={toggleMic}
-            className={`p-3 rounded-2xl border transition-all ${
+            className={`p-2.5 sm:p-3 rounded-2xl border transition-all ${
               isMicOn
                 ? 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
                 : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/40 text-rose-400'
             }`}
             title={isMicOn ? 'Mute Microphone' : 'Unmute Microphone'}
           >
-            {isMicOn ? <Mic className="w-5 h-5 text-[#00C49F]" /> : <MicOff className="w-5 h-5" />}
+            {isMicOn ? <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-[#00C49F]" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
           {/* Camera Toggle Button */}
           <button
             onClick={toggleCamera}
-            className={`p-3 rounded-2xl border transition-all ${
+            className={`p-2.5 sm:p-3 rounded-2xl border transition-all ${
               isVideoOn
                 ? 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
                 : 'bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/40 text-rose-400'
             }`}
             title={isVideoOn ? 'Turn Camera Off' : 'Turn Camera On'}
           >
-            {isVideoOn ? <Video className="w-5 h-5 text-[#00C49F]" /> : <VideoOff className="w-5 h-5" />}
+            {isVideoOn ? <Video className="w-4 h-4 sm:w-5 sm:h-5 text-[#00C49F]" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
           </button>
 
-          {/* Screen Share Button */}
-          <button
-            onClick={toggleScreenShare}
-            className={`p-3 rounded-2xl border transition-all ${
-              isScreenSharing
-                ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-lg shadow-cyan-500/20'
-                : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
-            }`}
-            title={isScreenSharing ? 'Stop Screen Sharing' : 'Share Screen'}
-          >
-            <ScreenShare className="w-5 h-5" />
-          </button>
+          {/* Screen Share Button - TEACHER ONLY (PER REQUIREMENT: students cannot share screen) */}
+          {isTeacher && (
+            <button
+              onClick={toggleScreenShare}
+              className={`p-2.5 sm:p-3 rounded-2xl border transition-all ${
+                isScreenSharing
+                  ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400 shadow-lg shadow-cyan-500/20'
+                  : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
+              }`}
+              title={isScreenSharing ? 'Stop Screen Sharing' : 'Share Screen (Faculty Only)'}
+            >
+              <ScreenShare className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          )}
 
-          {/* Raise Hand Button */}
-          <button
-            onClick={toggleRaiseHand}
-            className={`relative p-3 rounded-2xl border transition-all ${
-              isHandRaised
-                ? 'bg-amber-500 text-slate-950 font-bold border-amber-400 scale-105 shadow-lg shadow-amber-500/20'
-                : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-amber-400'
-            }`}
-            title={isHandRaised ? 'Lower Hand' : 'Raise Hand'}
-          >
-            <Hand className="w-5 h-5" />
-            {raisedHands.length > 0 && isTeacher && (
-              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center">
-                {raisedHands.length}
-              </span>
-            )}
-          </button>
+          {/* Raise Hand Button - STUDENTS ONLY (PER REQUIREMENT: removed for teacher) */}
+          {!isTeacher && (
+            <button
+              onClick={toggleRaiseHand}
+              className={`relative p-2.5 sm:p-3 rounded-2xl border transition-all ${
+                isHandRaised
+                  ? 'bg-amber-500 text-slate-950 font-bold border-amber-400 scale-105 shadow-lg shadow-amber-500/20'
+                  : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-amber-400'
+              }`}
+              title={isHandRaised ? 'Lower Hand' : 'Raise Hand'}
+            >
+              <Hand className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          )}
 
-          {/* Live Chat Panel Toggle ("chart") */}
+          {/* Live Chat Panel Toggle */}
           <button
             onClick={() => {
               setActivePanel(prev => prev === 'chat' ? 'none' : 'chat');
               setUnreadChatCount(0);
             }}
-            className={`relative p-3 rounded-2xl border transition-all ${
+            className={`relative p-2.5 sm:p-3 rounded-2xl border transition-all ${
               activePanel === 'chat'
                 ? 'bg-[#00a896]/20 border-[#00C49F] text-[#00C49F]'
                 : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
             }`}
             title="Open Live Chat"
           >
-            <MessageSquare className="w-5 h-5" />
+            <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
             {unreadChatCount > 0 && (
               <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#00C49F] text-slate-950 text-[10px] font-black flex items-center justify-center animate-bounce">
                 {unreadChatCount}
@@ -968,17 +1049,22 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             )}
           </button>
 
-          {/* Participants Panel Toggle */}
+          {/* Participants Panel Toggle (Shows raised hands counter badge to teacher) */}
           <button
             onClick={() => setActivePanel(prev => prev === 'participants' ? 'none' : 'participants')}
-            className={`p-3 rounded-2xl border transition-all ${
+            className={`relative p-2.5 sm:p-3 rounded-2xl border transition-all ${
               activePanel === 'participants'
                 ? 'bg-[#00a896]/20 border-[#00C49F] text-[#00C49F]'
                 : 'bg-[#071b34] hover:bg-[#0b2444] border-[#133966] text-white hover:border-[#00C49F]'
             }`}
             title="View Participants & Attendance Status"
           >
-            <Users className="w-5 h-5" />
+            <Users className="w-4 h-4 sm:w-5 sm:h-5" />
+            {raisedHands.length > 0 && isTeacher && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center animate-bounce" title={`${raisedHands.length} student(s) raised hand`}>
+                ✋{raisedHands.length}
+              </span>
+            )}
           </button>
 
         </div>
@@ -988,7 +1074,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           {isTeacher ? (
             <button
               onClick={() => setShowEndModal(true)}
-              className="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-rose-600/30 transition-all hover:scale-105"
+              className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-rose-600/30 transition-all hover:scale-105"
             >
               <PhoneOff className="w-4 h-4" />
               <span className="hidden sm:inline">End Class & Record Attendance</span>
@@ -997,7 +1083,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           ) : (
             <button
               onClick={handleStudentLeave}
-              className="px-4 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-bold text-xs flex items-center gap-2 transition-all"
+              className="px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-bold text-xs flex items-center gap-1.5 sm:gap-2 transition-all"
             >
               <PhoneOff className="w-4 h-4" />
               <span className="hidden sm:inline">Leave Class</span>
@@ -1019,7 +1105,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
             <div>
               <h3 className="text-lg font-black text-white">End Class & Finalize Attendance?</h3>
               <p className="text-xs text-slate-300 mt-1">
-                This will terminate the WebRTC session and automatically record attendance in the official database
+                This will terminate the live session and automatically record attendance in the official database
                 for Division <strong className="text-white">{classInfo?.division}</strong>.
               </p>
             </div>

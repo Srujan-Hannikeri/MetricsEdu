@@ -295,7 +295,7 @@ export default function StudentDashboard({ user, onUserUpdated }) {
             }`}
           >
             <Video className="w-4 h-4" />
-            🎥 Online Classes (WebRTC)
+            🎥 Live Online Classes
           </button>
           <button
             type="button"

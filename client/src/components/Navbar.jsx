@@ -16,7 +16,7 @@ function useLiveClock() {
   return time;
 }
 
-export default function Navbar({ user, onLogout, onOpenFeedback }) {
+export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileMenu, isMobileMenuOpen }) {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const now = useLiveClock();
@@ -74,7 +74,7 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
   const getNavItems = () => {
     if (user?.role === 'teacher') {
       return [
-        { id: 'online-class', label: 'Online Classes (WebRTC)', desc: 'Live video lecture & 80% attendance', icon: Video, color: 'text-rose-400 bg-rose-500/15 border-rose-500/30' },
+        { id: 'online-class', label: 'Live Online Classes', desc: 'Live video lecture & 80% attendance', icon: Video, color: 'text-rose-400 bg-rose-500/15 border-rose-500/30' },
         { id: 'my-classes', label: 'My Assigned Classes', desc: 'Schedule & daily lectures', icon: BookOpen, color: 'text-[#00C49F] bg-[#00a896]/15 border-[#00a896]/30' },
         { id: 'take-attendance', label: 'Take Attendance', desc: 'Face vision photo scanner', icon: Camera, color: 'text-cyan-400 bg-cyan-500/15 border-cyan-500/30' },
         { id: 'marks-entry', label: 'Exam Marks Entry', desc: 'IA & Semester evaluations', icon: Award, color: 'text-amber-400 bg-amber-500/15 border-amber-500/30' },
@@ -125,11 +125,11 @@ export default function Navbar({ user, onLogout, onOpenFeedback }) {
           {user && (
             <button
               type="button"
-              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              onClick={onToggleMobileMenu || (() => setShowMobileMenu(!showMobileMenu))}
               aria-label="Open navigation menu"
-              className="sm:hidden flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] transition-colors"
+              className="md:hidden flex items-center justify-center p-2 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] transition-colors"
             >
-              {showMobileMenu ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {(isMobileMenuOpen !== undefined ? isMobileMenuOpen : showMobileMenu) ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           )}
 

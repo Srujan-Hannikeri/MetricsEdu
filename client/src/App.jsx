@@ -1,5 +1,6 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
 import AuthView from './components/AuthView';
 import FeedbackModal from './components/FeedbackModal';
 
@@ -15,10 +16,21 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [currentActiveTab, setCurrentActiveTab] = useState('overview');
 
   // Background initialization & auth restoration
   useEffect(() => {
     checkCurrentUser();
+  }, []);
+
+  // Listen for tab changes from dashboard
+  useEffect(() => {
+    const handleTabChange = (e) => {
+      if (e.detail?.tab) setCurrentActiveTab(e.detail.tab);
+    };
+    window.addEventListener('metricsedu:tab-changed', handleTabChange);
+    return () => window.removeEventListener('metricsedu:tab-changed', handleTabChange);
   }, []);
 
   // Path change / popstate listener and hidden dev shortcut (Ctrl+Shift+D)
@@ -112,26 +124,46 @@ export default function App() {
         user={user}
         onLogout={handleLogout}
         onOpenFeedback={() => setShowFeedbackModal(true)}
+        onToggleMobileMenu={() => setIsMobileMenuOpen(prev => !prev)}
+        isMobileMenuOpen={isMobileMenuOpen}
       />
 
-      {/* Main Content Body */}
-      <main className="flex-1">
-        <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading dashboard...</div>}>
-          {!user ? (
-            <AuthView onAuthSuccess={handleAuthSuccess} />
-          ) : user.role === 'admin' ? (
-            <AdminDashboard user={user} />
-          ) : user.role === 'teacher' ? (
-            <TeacherDashboard user={user} />
-          ) : user.role === 'student' ? (
-            <StudentDashboard user={user} onUserUpdated={(u) => setUser(u)} />
-          ) : (
-            <div className="p-8 text-center text-xs text-slate-400">
-              Unrecognized role. Contact system administrator.
-            </div>
-          )}
-        </Suspense>
-      </main>
+      {/* Main Layout: Sidebar on Desktop & Mobile Drawer + Content on Right */}
+      <div className="flex-1 flex min-w-0 relative">
+        {user && (
+          <Sidebar
+            user={user}
+            activeTab={currentActiveTab}
+            onSelectTab={(tabId) => {
+              setCurrentActiveTab(tabId);
+              window.dispatchEvent(new CustomEvent('metricsedu:navigate-tab', { detail: { tab: tabId } }));
+            }}
+            isOpen={isMobileMenuOpen}
+            onClose={() => setIsMobileMenuOpen(false)}
+            onLogout={handleLogout}
+            onOpenFeedback={() => setShowFeedbackModal(true)}
+          />
+        )}
+
+        {/* Main Content Body */}
+        <main className="flex-1 min-w-0 overflow-y-auto">
+          <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading dashboard...</div>}>
+            {!user ? (
+              <AuthView onAuthSuccess={handleAuthSuccess} />
+            ) : user.role === 'admin' ? (
+              <AdminDashboard user={user} />
+            ) : user.role === 'teacher' ? (
+              <TeacherDashboard user={user} />
+            ) : user.role === 'student' ? (
+              <StudentDashboard user={user} onUserUpdated={(u) => setUser(u)} />
+            ) : (
+              <div className="p-8 text-center text-xs text-slate-400">
+                Unrecognized role. Contact system administrator.
+              </div>
+            )}
+          </Suspense>
+        </main>
+      </div>
 
       {/* Feedback Modal */}
       <FeedbackModal

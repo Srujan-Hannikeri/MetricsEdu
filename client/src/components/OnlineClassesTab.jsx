@@ -119,7 +119,7 @@ export default function OnlineClassesTab({ user }) {
           <div className="flex items-center gap-2">
             <span className="p-1 px-2.5 rounded-lg bg-[#00a896]/15 text-[#00C49F] font-mono text-xs font-bold border border-[#00a896]/30 flex items-center gap-1.5">
               <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
-              WEBRTC LIVE CLASSROOM
+              LIVE ONLINE CLASSROOM
             </span>
             <span className="text-xs text-slate-400 font-mono">
               {isTeacher ? 'Host Mode · Division Targeting' : `Division ${user?.division || 'A'}`}
@@ -129,7 +129,7 @@ export default function OnlineClassesTab({ user }) {
             Online Lectures & 80% Automated Attendance
           </h2>
           <p className="text-xs sm:text-sm text-cyan-200/70 mt-1">
-            Conduct live classes with WebRTC video, chat, screen share, and raise-hand tools.
+            Conduct live classes with video, chat, screen share, and raise-hand tools.
             Attendance is automatically recorded for students attending at least 80% of the session.
           </p>
         </div>
@@ -162,7 +162,7 @@ export default function OnlineClassesTab({ user }) {
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                        <Radio className="w-3 h-3 text-rose-400" /> Live WebRTC
+                        <Radio className="w-3 h-3 text-rose-400" /> Live Class
                       </span>
                       <span className="px-2 py-0.5 rounded-md bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 text-[11px] font-mono font-bold">
                         Division {cls.division}
@@ -275,7 +275,7 @@ export default function OnlineClassesTab({ user }) {
                 {startingClass ? (
                   <>
                     <div className="w-4 h-4 border-2 border-[#040d1a] border-t-transparent rounded-full animate-spin" />
-                    Launching WebRTC Class...
+                    Launching Live Class...
                   </>
                 ) : (
                   <>
@@ -298,7 +298,7 @@ export default function OnlineClassesTab({ user }) {
           <h3 className="text-base font-bold text-white">No Live Online Class Right Now</h3>
           <p className="text-xs text-slate-400">
             When your subject teacher starts an online lecture for Division {user?.division || 'A'},
-            a live join button will appear right here with instant WebRTC connection.
+            a live join button will appear right here with instant live connection.
           </p>
           <div className="p-3 rounded-xl bg-[#040d1a] border border-[#133966] text-[11px] text-cyan-200/80 font-mono">
             ⚠️ Reminder: You must attend at least 80% of the class to get automatic attendance credit!

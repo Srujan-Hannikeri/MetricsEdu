@@ -355,7 +355,7 @@ export default function TeacherDashboard({ user }) {
         <div className="mt-4 w-full overflow-x-auto no-scrollbar rounded-2xl border border-[#133966] bg-[#071b34] p-1.5 shadow-md touch-scroll">
           <div className="flex w-max min-w-full items-center gap-1">
           {[
-            { id: 'online-class', label: '🎥 Online Classes (WebRTC)', icon: Video },
+            { id: 'online-class', label: '🎥 Live Online Classes', icon: Video },
             { id: 'my-classes', label: 'My Assigned Classes', icon: BookOpen },
             { id: 'take-attendance', label: 'Take Attendance', icon: Camera },
             { id: 'marks-entry', label: 'Exam Marks Entry', icon: Award },
