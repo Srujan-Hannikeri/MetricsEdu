@@ -425,15 +425,19 @@ exports.toggleRaiseHand = async (req, res) => {
   try {
     const { classId } = req.params;
     const user = req.user;
-    const targetStudentId = req.body.studentId || user._id.toString();
+    const targetStudentId = (req.body && req.body.studentId) || user._id.toString();
 
     const onlineClass = await OnlineClass.findById(classId);
     if (!onlineClass) {
       return res.status(404).json({ success: false, message: 'Online class not found.' });
     }
 
+    if (!onlineClass.raisedHands) {
+      onlineClass.raisedHands = [];
+    }
+
     const existingIdx = onlineClass.raisedHands.findIndex(
-      rh => rh.studentId?.toString() === targetStudentId.toString()
+      rh => (rh.studentId?._id || rh.studentId)?.toString() === targetStudentId.toString()
     );
 
     let isRaised = false;
@@ -451,7 +455,7 @@ exports.toggleRaiseHand = async (req, res) => {
 
     await onlineClass.save();
 
-    // Broadcast raise-hand signal
+    // Broadcast raise-hand signal to everyone in class
     if (!signalQueues.has(classId)) signalQueues.set(classId, []);
     signalQueues.get(classId).push({
       id: `${Date.now()}_hand`,
@@ -460,7 +464,11 @@ exports.toggleRaiseHand = async (req, res) => {
       fromName: user.name,
       to: 'all',
       type: 'hand-raised',
-      payload: { studentId: targetStudentId, studentName: user.name, isRaised },
+      payload: {
+        studentId: targetStudentId.toString(),
+        studentName: user.name,
+        isRaised
+      },
       timestamp: Date.now()
     });
 
@@ -478,17 +486,37 @@ exports.toggleRaiseHand = async (req, res) => {
 exports.lowerHand = async (req, res) => {
   try {
     const { classId } = req.params;
-    const { studentId } = req.body;
+    const studentId = (req.body && req.body.studentId) || req.user._id.toString();
 
     const onlineClass = await OnlineClass.findById(classId);
     if (!onlineClass) {
       return res.status(404).json({ success: false, message: 'Online class not found.' });
     }
 
+    if (!onlineClass.raisedHands) {
+      onlineClass.raisedHands = [];
+    }
+
     onlineClass.raisedHands = onlineClass.raisedHands.filter(
-      rh => rh.studentId?.toString() !== (studentId || req.user._id).toString()
+      rh => (rh.studentId?._id || rh.studentId)?.toString() !== studentId.toString()
     );
     await onlineClass.save();
+
+    // Broadcast lower-hand signal to all participants
+    if (!signalQueues.has(classId)) signalQueues.set(classId, []);
+    signalQueues.get(classId).push({
+      id: `${Date.now()}_lower`,
+      seq: ++signalSequenceCounter,
+      from: req.user._id.toString(),
+      fromName: req.user.name,
+      to: 'all',
+      type: 'hand-raised',
+      payload: {
+        studentId: studentId.toString(),
+        isRaised: false
+      },
+      timestamp: Date.now()
+    });
 
     return res.json({ success: true, raisedHands: onlineClass.raisedHands });
   } catch (err) {

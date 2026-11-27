@@ -291,11 +291,34 @@ exports.createTimetableEntry = async (req, res) => {
       });
     }
 
-    // 2. Teacher break rule
-    const teacherDaySlots = await Timetable.find({
-      day, teacher: teacherId, institutionType: getInstitutionTypeFilter(effectiveInstitutionType)
+    // 2. Teacher double-booking check: A teacher CANNOT be assigned to two classes at the same time
+    const targetSlotTimes = parseSlotTimes(trimmedSlot);
+    const teacherExistingSlots = await Timetable.find({
+      day,
+      teacher: teacherId,
+      institutionType: getInstitutionTypeFilter(effectiveInstitutionType)
+    }).populate('course', 'code title');
+
+    const teacherOverlap = teacherExistingSlots.find(s => {
+      if (s.timeSlot === trimmedSlot) return true;
+      if (targetSlotTimes) {
+        const sTimes = parseSlotTimes(s.timeSlot);
+        if (sTimes) {
+          return targetSlotTimes.start < sTimes.end && targetSlotTimes.end > sTimes.start;
+        }
+      }
+      return false;
     });
-    const breakError = checkTeacherBreakViolation(trimmedSlot, teacherDaySlots, teacher.name || 'Teacher');
+
+    if (teacherOverlap) {
+      return res.status(400).json({
+        success: false,
+        message: `Teacher Conflict: "${teacher.name}" is already assigned to Division ${teacherOverlap.division || 'A'} (${teacherOverlap.course?.code || 'Course'}) on ${day} at ${teacherOverlap.timeSlot}. A teacher cannot be assigned to two classes at the same time.`
+      });
+    }
+
+    // 3. Teacher break rule
+    const breakError = checkTeacherBreakViolation(trimmedSlot, teacherExistingSlots, teacher.name || 'Teacher');
     if (breakError) return res.status(400).json({ success: false, message: breakError });
 
     // 3. Classroom clash
@@ -407,10 +430,33 @@ exports.updateTimetableEntry = async (req, res) => {
     }
 
     if (targetTeacher) {
-      const teacherDaySlots = await Timetable.find({
-        _id: { $ne: id }, day: targetDay, teacher: targetTeacher, institutionType: institutionFilter
+      const targetSlotTimes = parseSlotTimes(targetSlot);
+      const teacherExistingSlots = await Timetable.find({
+        _id: { $ne: id },
+        day: targetDay,
+        teacher: targetTeacher,
+        institutionType: institutionFilter
+      }).populate('course', 'code title');
+
+      const teacherOverlap = teacherExistingSlots.find(s => {
+        if (s.timeSlot === targetSlot) return true;
+        if (targetSlotTimes) {
+          const sTimes = parseSlotTimes(s.timeSlot);
+          if (sTimes) {
+            return targetSlotTimes.start < sTimes.end && targetSlotTimes.end > sTimes.start;
+          }
+        }
+        return false;
       });
-      const breakError = checkTeacherBreakViolation(targetSlot, teacherDaySlots, teacher.name || 'Teacher');
+
+      if (teacherOverlap) {
+        return res.status(400).json({
+          success: false,
+          message: `Teacher Conflict: "${teacher.name}" is already assigned to Division ${teacherOverlap.division || 'A'} (${teacherOverlap.course?.code || 'Course'}) on ${targetDay} at ${teacherOverlap.timeSlot}. A teacher cannot be assigned to two classes at the same time.`
+        });
+      }
+
+      const breakError = checkTeacherBreakViolation(targetSlot, teacherExistingSlots, teacher.name || 'Teacher');
       if (breakError) return res.status(400).json({ success: false, message: breakError });
     }
 
@@ -772,17 +818,13 @@ exports.autoGenerateTimetable = async (req, res) => {
       }
     }
 
-    // Pre-fetch already-scheduled slots for teachers in OTHER divisions to avoid double-booking
-    // (These are slots NOT being deleted — i.e., from other branch/sem)
+    // Pre-fetch already-scheduled slots for teachers across the ENTIRE institution to avoid double-booking
+    // (Ensures a teacher is never assigned to two classes at the same time across any branch/semester/division)
+    const allTeacherIds = [...new Set(subjectsWithTeachers.map(s => s.teacher?._id?.toString()).filter(Boolean))];
     const allExistingTeacherSlots = await Timetable.find({
-      branch: targetBranch,
-      semester: targetSem,
-      standard: targetStandard,
-      pucYear: targetPucYear,
-      pucDept: targetPucDept,
       institutionType: getInstitutionTypeFilter(instType),
-      division: { $nin: targetDivs },
-      course: { $in: ownedCourseIds }
+      teacher: { $in: allTeacherIds },
+      day: { $in: days }
     }).select('day timeSlot teacher division');
 
     for (const div of targetDivs) {
@@ -1084,6 +1126,38 @@ exports.assignTeacherToCourse = async (req, res) => {
         success: false,
         message: `${teacher?.name || 'This teacher'} is already assigned to "${conflictCourse.code} - ${conflictCourse.title}" in Semester ${targetCourse.semester}. One teacher per subject per semester.`
       });
+    }
+
+    // Validate that the assigned teacher does not collide with existing scheduled timetable slots
+    const existingCourseSlots = await Timetable.find({
+      course: { $in: relatedCourseIds },
+      institutionType: getInstitutionTypeFilter(adminType)
+    });
+    for (const slot of existingCourseSlots) {
+      const slotTimes = parseSlotTimes(slot.timeSlot);
+      const teacherSlotsOnDay = await Timetable.find({
+        _id: { $nin: existingCourseSlots.map(s => s._id) },
+        day: slot.day,
+        teacher: teacherId,
+        institutionType: getInstitutionTypeFilter(adminType)
+      }).populate('course', 'code title');
+
+      const collision = teacherSlotsOnDay.find(ts => {
+        if (ts.timeSlot === slot.timeSlot) return true;
+        if (slotTimes) {
+          const tsTimes = parseSlotTimes(ts.timeSlot);
+          if (tsTimes) return slotTimes.start < tsTimes.end && slotTimes.end > tsTimes.start;
+        }
+        return false;
+      });
+
+      if (collision) {
+        const teacherObj = await User.findById(teacherId).select('name');
+        return res.status(400).json({
+          success: false,
+          message: `Cannot assign teacher: "${teacherObj?.name || 'This teacher'}" already has a class in Division ${collision.division || 'A'} (${collision.course?.code || 'Class'}) on ${slot.day} at ${collision.timeSlot}. A teacher cannot be assigned to two classes at the same time.`
+        });
+      }
     }
 
     await Course.updateOne({ _id: targetCourse._id, createdByAdmin: tenantAdminId }, {

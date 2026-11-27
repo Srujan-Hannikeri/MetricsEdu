@@ -228,7 +228,7 @@ export const api = {
   sendOnlineClassMessage: (sessionId, text) =>
     request(`/online-class/session/${sessionId}/message`, { method: 'POST', body: JSON.stringify({ text }) }),
   toggleOnlineClassRaiseHand: (sessionId) =>
-    request(`/online-class/session/${sessionId}/raise-hand`, { method: 'POST' }),
+    request(`/online-class/session/${sessionId}/raise-hand`, { method: 'POST', body: JSON.stringify({}) }),
   lowerOnlineClassHand: (sessionId, studentId) =>
     request(`/online-class/session/${sessionId}/lower-hand`, { method: 'POST', body: JSON.stringify({ studentId }) }),
   endOnlineClass: (sessionId) =>

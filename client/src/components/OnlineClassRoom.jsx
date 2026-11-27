@@ -22,17 +22,21 @@ function playHandRaiseChime() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    const now = ctx.currentTime;
+    osc.frequency.setValueAtTime(587.33, now); // D5
+    osc.frequency.setValueAtTime(880, now + 0.15); // A5
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.6);
+    osc.start(now);
+    osc.stop(now + 0.65);
   } catch (e) {
     console.warn('Audio chime warning:', e);
   }
@@ -69,7 +73,11 @@ function RemoteVideoTile({
     }
   }, [remote?.stream, remote?.version]);
 
-  const hasRaisedHand = raisedHands?.some(h => h.studentId === peerId);
+  const hasRaisedHand = raisedHands?.some(h => {
+    const rhId = (h.studentId?._id || h.studentId)?.toString();
+    const pId = (peerId?._id || peerId)?.toString();
+    return rhId && pId && rhId === pId;
+  });
 
   return (
     <div className={`relative rounded-2xl bg-[#071b34] border ${
@@ -247,20 +255,24 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     }
   }, [screenStream, isScreenSharing]);
 
-  // Student fallback ping if no remote faculty stream is detected within 2.5s of joining
+  // Student proactive ping: if faculty stream is not yet connected, send fast offer requests
   useEffect(() => {
     if (!isTeacher && !loading) {
-      const timer = setTimeout(() => {
-        if (Object.keys(remoteStreams).length === 0) {
+      const pingInterval = setInterval(() => {
+        const tId = (classInfo?.teacher?._id || classInfo?.teacher)?.toString();
+        const hasFacultyStream = Object.entries(remoteStreams).some(
+          ([id, r]) => r.role === 'teacher' || (tId && id.toString() === tId)
+        );
+        if (!hasFacultyStream) {
           api.sendOnlineClassSignal(classId, {
             type: 'request-offer',
             payload: { role: user.role, name: user.name }
           }).catch(() => {});
         }
-      }, 2500);
-      return () => clearTimeout(timer);
+      }, 1500);
+      return () => clearInterval(pingInterval);
     }
-  }, [loading, isTeacher, Object.keys(remoteStreams).length, classId]);
+  }, [loading, isTeacher, remoteStreams, classInfo, classId]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // 1. Initialize Room & Media
@@ -279,10 +291,11 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         const [_, joinRes] = await Promise.all([mediaPromise, joinPromise]);
         if (!mounted) return;
 
-        setClassInfo(joinRes.onlineClass || joinRes.session);
-        setChatMessages(joinRes.onlineClass?.chatMessages || joinRes.session?.chatMessages || []);
-        setRaisedHands(joinRes.onlineClass?.raisedHands || joinRes.session?.raisedHands || []);
-        setParticipantsList(joinRes.onlineClass?.participants || joinRes.session?.participants || []);
+        const info = joinRes.onlineClass || joinRes.session;
+        setClassInfo(info);
+        setChatMessages(info?.chatMessages || []);
+        setRaisedHands(info?.raisedHands || []);
+        setParticipantsList(info?.participants || []);
 
         // 2. Notify peers that we joined
         await api.sendOnlineClassSignal(classId, {
@@ -290,15 +303,23 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           payload: { role: user.role, name: user.name }
         });
 
+        // If student, immediately request WebRTC offer from teacher for zero-wait video streaming
+        if (!isTeacher) {
+          api.sendOnlineClassSignal(classId, {
+            type: 'request-offer',
+            payload: { role: user.role, name: user.name }
+          }).catch(() => {});
+        }
+
         // If teacher, initiate call to any participants already in room
-        const activeParts = joinRes.onlineClass?.participants || joinRes.session?.participants || [];
+        const activeParts = info?.participants || [];
         if (isTeacher && activeParts.length > 0) {
           for (const p of activeParts) {
             const pId = (p.student?._id || p.student || '').toString();
             if (pId && pId !== user._id.toString()) {
               setTimeout(() => {
                 initiateCallToPeer(pId, p.name, 'student');
-              }, 400);
+              }, 300);
             }
           }
         }
@@ -344,9 +365,9 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   // ───────────────────────────────────────────────────────────────────────────
   const initLocalMedia = async () => {
     try {
-      // Use standard responsive constraints that initialize immediately on all webcams
+      // Rapid responsive constraints that start the webcam instantly
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640, max: 1280 }, height: { ideal: 480, max: 720 }, frameRate: { ideal: 30 } },
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
         audio: true
       });
       localStreamRef.current = stream;
@@ -368,17 +389,40 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         });
       });
     } catch (err) {
-      console.warn('Camera/Mic permission denied or unavailable:', err);
-      setStreamError('Microphone or Camera access was denied or not found. You can still participate in audio/chat.');
-      // Attempt audio-only fallback
+      console.warn('Camera/Mic combined access failed, attempting separate devices:', err);
+      // Attempt separate video and audio capture so one failure does not block the other
+      let capturedStream = null;
       try {
-        const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
-        localStreamRef.current = audioOnly;
-        setLocalStream(audioOnly);
+        const vStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        capturedStream = vStream;
+        setIsVideoOn(true);
+      } catch (vErr) {
+        console.warn('Video access failed:', vErr);
         setIsVideoOn(false);
-      } catch (audioErr) {
+      }
+
+      try {
+        const aStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (capturedStream) {
+          aStream.getAudioTracks().forEach(t => capturedStream.addTrack(t));
+        } else {
+          capturedStream = aStream;
+        }
+        setIsMicOn(true);
+      } catch (aErr) {
+        console.warn('Audio access failed:', aErr);
         setIsMicOn(false);
-        setIsVideoOn(false);
+      }
+
+      if (capturedStream) {
+        localStreamRef.current = capturedStream;
+        setLocalStream(capturedStream);
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = capturedStream;
+          localVideoRef.current.play().catch(() => {});
+        }
+      } else {
+        setStreamError('Microphone or Camera access was denied or not found. You can still participate in live chat and monitor the session.');
       }
     }
   };
@@ -420,7 +464,11 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       if (camTrack) {
         peerConnectionsRef.current.forEach(pc => {
           const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-          if (sender) sender.replaceTrack(camTrack);
+          if (sender) {
+            sender.replaceTrack(camTrack).catch(() => {});
+          } else {
+            try { pc.addTrack(camTrack, localStreamRef.current); } catch (e) {}
+          }
         });
       }
 
@@ -443,7 +491,11 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
         // Replace video track in peer connections with screen track
         peerConnectionsRef.current.forEach(pc => {
           const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-          if (sender) sender.replaceTrack(screenTrack);
+          if (sender) {
+            sender.replaceTrack(screenTrack).catch(() => {});
+          } else {
+            try { pc.addTrack(screenTrack, screen); } catch (e) {}
+          }
         });
 
         // Broadcast screen share active to students
@@ -479,6 +531,10 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       return peerConnectionsRef.current.get(peerId);
     }
 
+    const tUserId = (classInfo?.teacher?._id || classInfo?.teacher)?.toString();
+    const isThisPeerTeacher = peerRole === 'teacher' || (tUserId && peerId?.toString() === tUserId);
+    const resolvedRole = isThisPeerTeacher ? 'teacher' : (peerRole || 'student');
+
     const pc = new RTCPeerConnection(RTC_CONFIG);
 
     // Add local tracks to this peer connection
@@ -512,8 +568,8 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           ...prev,
           [peerId]: {
             stream: finalStream,
-            name: peerName || prev[peerId]?.name || 'Participant',
-            role: peerRole || prev[peerId]?.role || 'student',
+            name: peerName || prev[peerId]?.name || (isThisPeerTeacher ? (classInfo?.teacherName || 'Faculty') : 'Participant'),
+            role: resolvedRole,
             version: Date.now()
           }
         };
@@ -649,21 +705,22 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       }
 
       case 'hand-raised': {
+        const sId = (payload.studentId?._id || payload.studentId)?.toString();
         if (payload.isRaised) {
           if (isTeacher) {
             playHandRaiseChime();
             setHandRaiseNotification({
-              studentId: payload.studentId,
+              studentId: sId,
               studentName: payload.studentName
             });
           }
           setRaisedHands(prev => {
-            if (prev.some(h => h.studentId === payload.studentId)) return prev;
-            return [...prev, { studentId: payload.studentId, studentName: payload.studentName, raisedAt: new Date() }];
+            if (prev.some(h => (h.studentId?._id || h.studentId)?.toString() === sId)) return prev;
+            return [...prev, { studentId: sId, studentName: payload.studentName, raisedAt: new Date() }];
           });
         } else {
-          setRaisedHands(prev => prev.filter(h => h.studentId !== payload.studentId));
-          setHandRaiseNotification(prev => prev?.studentId === payload.studentId ? null : prev);
+          setRaisedHands(prev => prev.filter(h => (h.studentId?._id || h.studentId)?.toString() !== sId));
+          setHandRaiseNotification(prev => (prev?.studentId?._id || prev?.studentId)?.toString() === sId ? null : prev);
         }
         break;
       }
@@ -841,16 +898,47 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     if (isTeacher) return;
     try {
       const res = await api.toggleOnlineClassRaiseHand(classId);
-      setIsHandRaised(res.isRaised);
+      const nextRaised = res.isRaised !== undefined ? res.isRaised : !isHandRaised;
+      setIsHandRaised(nextRaised);
       if (res.raisedHands) setRaisedHands(res.raisedHands);
-      if (res.isRaised) {
+
+      // Direct WebRTC signal broadcast for zero-latency notification to teacher
+      api.sendOnlineClassSignal(classId, {
+        type: 'hand-raised',
+        payload: {
+          studentId: user._id.toString(),
+          studentName: user.name,
+          isRaised: nextRaised
+        }
+      }).catch(() => {});
+
+      if (nextRaised) {
         playHandRaiseChime();
         setUserNotice('Hand raised! Faculty has been notified with audio alert.');
       } else {
         setUserNotice('Hand lowered.');
       }
     } catch (err) {
-      console.error('Failed to toggle hand raise:', err);
+      console.error('Failed to toggle hand raise via API, using fallback broadcast:', err);
+      const fallbackRaised = !isHandRaised;
+      setIsHandRaised(fallbackRaised);
+
+      // Direct signal broadcast fallback
+      api.sendOnlineClassSignal(classId, {
+        type: 'hand-raised',
+        payload: {
+          studentId: user._id.toString(),
+          studentName: user.name,
+          isRaised: fallbackRaised
+        }
+      }).catch(() => {});
+
+      if (fallbackRaised) {
+        playHandRaiseChime();
+        setUserNotice('Hand raised! Faculty notified.');
+      } else {
+        setUserNotice('Hand lowered.');
+      }
     }
   };
 
@@ -858,6 +946,15 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
     try {
       const res = await api.lowerOnlineClassHand(classId, studentId);
       if (res.raisedHands) setRaisedHands(res.raisedHands);
+
+      // Broadcast lower-hand event
+      api.sendOnlineClassSignal(classId, {
+        type: 'hand-raised',
+        payload: {
+          studentId: studentId.toString(),
+          isRaised: false
+        }
+      }).catch(() => {});
     } catch (err) {
       console.error('Failed to lower hand:', err);
     }
@@ -943,11 +1040,15 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   }
 
   // For students: identify the teacher peer stream
-  const teacherPeer = Object.entries(remoteStreams).find(([id, r]) => r.role === 'teacher') ||
-    (!isTeacher && Object.entries(remoteStreams).length > 0 ? Object.entries(remoteStreams)[0] : null);
+  const teacherUserId = (classInfo?.teacher?._id || classInfo?.teacher)?.toString();
+  const teacherPeer = Object.entries(remoteStreams).find(([id, r]) => 
+    r.role === 'teacher' || (teacherUserId && id?.toString() === teacherUserId)
+  ) || (!isTeacher && Object.entries(remoteStreams).length > 0 ? Object.entries(remoteStreams)[0] : null);
 
   // For teacher: identify all student peer streams and pagination for 4x4 grid (16 per page)
-  const studentPeers = Object.entries(remoteStreams).filter(([id, r]) => r.role !== 'teacher');
+  const studentPeers = Object.entries(remoteStreams).filter(([id, r]) => 
+    r.role !== 'teacher' && (!teacherUserId || id?.toString() !== teacherUserId)
+  );
   const totalStudentPages = Math.max(1, Math.ceil(studentPeers.length / 16));
   const currentStudents = studentPeers.slice(teacherGridPage * 16, (teacherGridPage + 1) * 16);
 
