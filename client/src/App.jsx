@@ -106,8 +106,20 @@ export default function App() {
     );
   }
 
-  // ─── Hidden Web Developer Team Portal Route ─────────────────────────────────
+  // ─── Hidden Web Developer Team Portal Route (Accessible via /developer, /dev, or Ctrl+Shift+D) ──
   const isDevRoute = currentPath === '/developer' || currentPath === '/dev' || window.location.hash === '#developer';
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault();
+        navigateTo(isDevRoute ? '/' : '/developer');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isDevRoute]);
+
   if (isDevRoute) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-[#020813] flex items-center justify-center text-xs text-slate-400">Loading Core Console...</div>}>

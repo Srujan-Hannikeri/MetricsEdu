@@ -79,16 +79,31 @@ function RemoteVideoTile({
     return rhId && pId && rhId === pId;
   });
 
+  const isVideoOff = remote?.videoOff || false;
+  const isMuted = remote?.isMuted || false;
+
   return (
     <div className={`relative rounded-2xl bg-[#071b34] border ${
       hasRaisedHand ? 'border-amber-400 ring-2 ring-amber-400/50' : 'border-[#133966]'
     } overflow-hidden flex items-center justify-center shadow-lg group w-full h-full min-h-0 min-w-0`}>
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        className={`w-full h-full ${isMainStage ? 'object-contain bg-black' : 'object-cover'}`}
-      />
+      {isVideoOff ? (
+        <div className="w-full h-full flex flex-col items-center justify-center bg-[#030d1a] text-slate-400 select-none p-2">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#071b34] border-2 border-[#133966] flex items-center justify-center text-white font-bold text-sm sm:text-base mb-1 shadow-inner">
+            {remote?.name?.charAt(0) || 'S'}
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-slate-400 font-mono flex items-center gap-1">
+            <VideoOff className="w-3 h-3 text-rose-400" /> Camera Off
+          </span>
+        </div>
+      ) : (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={isMuted}
+          className={`w-full h-full ${isMainStage ? 'object-contain bg-black' : 'object-cover'}`}
+        />
+      )}
 
       {/* Screen Share Active Badge on Student View */}
       {isMainStage && isScreenShareActive && (
@@ -111,6 +126,21 @@ function RemoteVideoTile({
         >
           <span>Click to Unmute Audio 🔊</span>
         </button>
+      )}
+
+      {/* Mic Status Badge on Tile */}
+      {!isMainStage && (
+        <div className="absolute top-1.5 right-1.5 z-10">
+          {isMuted ? (
+            <span className="p-1 rounded-md bg-rose-500/30 text-rose-300 border border-rose-500/50 text-[9px] flex items-center gap-0.5 shadow-sm" title="Microphone Muted">
+              <MicOff className="w-2.5 h-2.5" />
+            </span>
+          ) : (
+            <span className="p-1 rounded-md bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 text-[9px] flex items-center gap-0.5 shadow-sm" title="Microphone Active">
+              <Mic className="w-2.5 h-2.5" />
+            </span>
+          )}
+        </div>
       )}
 
       {/* Bottom Overlay Label */}
@@ -137,11 +167,15 @@ function RemoteVideoTile({
               </button>
             )}
             <button
-              onClick={() => onRemoteControl(peerId, 'mute-audio')}
-              className="p-1 rounded-lg bg-[#040d1a]/80 hover:bg-[#071b34] text-slate-300 hover:text-white border border-[#133966]"
-              title="Mute student"
+              onClick={() => onRemoteControl(peerId, isMuted ? 'unmute-audio' : 'mute-audio')}
+              className={`p-1 rounded-lg border transition-all ${
+                isMuted
+                  ? 'bg-rose-500/30 text-rose-300 border-rose-500/50 hover:bg-rose-500/40'
+                  : 'bg-[#040d1a]/80 hover:bg-[#071b34] text-slate-300 hover:text-white border-[#133966]'
+              }`}
+              title={isMuted ? 'Unmute student' : 'Mute student'}
             >
-              <MicOff className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-400" />
+              {isMuted ? <MicOff className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-rose-400" /> : <Mic className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-emerald-400" />}
             </button>
           </div>
         )}
@@ -728,43 +762,71 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
       case 'remote-control': {
         if (!isTeacher) {
           const { action, by } = payload;
+          let nextMic = isMicOn;
+          let nextVideo = isVideoOn;
+
           if (action === 'mute-audio' || action === 'mute-all') {
             if (localStreamRef.current) {
               const audioTrack = localStreamRef.current.getAudioTracks()[0];
-              if (audioTrack) {
-                audioTrack.enabled = false;
-                setIsMicOn(false);
-              }
+              if (audioTrack) audioTrack.enabled = false;
             }
+            setIsMicOn(false);
+            nextMic = false;
             setUserNotice(`Faculty (${by || 'Teacher'}) muted your microphone.`);
           } else if (action === 'unmute-audio' || action === 'unmute-all') {
             if (localStreamRef.current) {
               const audioTrack = localStreamRef.current.getAudioTracks()[0];
-              if (audioTrack) {
-                audioTrack.enabled = true;
-                setIsMicOn(true);
-              }
+              if (audioTrack) audioTrack.enabled = true;
             }
+            setIsMicOn(true);
+            nextMic = true;
             setUserNotice(`Faculty (${by || 'Teacher'}) unmuted your microphone. You can now speak and ask doubts!`);
           } else if (action === 'disable-video' || action === 'stop-all-video') {
             if (localStreamRef.current) {
               const videoTrack = localStreamRef.current.getVideoTracks()[0];
-              if (videoTrack) {
-                videoTrack.enabled = false;
-                setIsVideoOn(false);
-              }
+              if (videoTrack) videoTrack.enabled = false;
             }
+            setIsVideoOn(false);
+            nextVideo = false;
             setUserNotice(`Faculty (${by || 'Teacher'}) turned off your camera.`);
           } else if (action === 'enable-video' || action === 'enable-all-video') {
             if (localStreamRef.current) {
               const videoTrack = localStreamRef.current.getVideoTracks()[0];
-              if (videoTrack) {
-                videoTrack.enabled = true;
-                setIsVideoOn(true);
-              }
+              if (videoTrack) videoTrack.enabled = true;
             }
+            setIsVideoOn(true);
+            nextVideo = true;
             setUserNotice(`Faculty (${by || 'Teacher'}) requested you to turn on your camera.`);
           }
+
+          // Broadcast media status back to faculty for instant desk indicator sync
+          api.sendOnlineClassSignal(classId, {
+            type: 'media-status-update',
+            payload: {
+              studentId: user._id.toString(),
+              isMicOn: nextMic,
+              isVideoOn: nextVideo
+            }
+          }).catch(() => {});
+        }
+        break;
+      }
+
+      case 'media-status-update': {
+        if (isTeacher && payload?.studentId) {
+          const sId = payload.studentId.toString();
+          setRemoteStreams(prev => {
+            if (!prev[sId]) return prev;
+            return {
+              ...prev,
+              [sId]: {
+                ...prev[sId],
+                isMuted: payload.isMicOn === false,
+                videoOff: payload.isVideoOn === false,
+                version: Date.now()
+              }
+            };
+          });
         }
         break;
       }
@@ -796,6 +858,73 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
   const handleRemoteControl = async (targetId, action) => {
     if (!isTeacher) return;
+
+    // 1. Instant local state updates on teacher's dashboard for zero latency
+    if (action === 'mute-all') {
+      setUserNotice('All student microphones have been muted.');
+      setRemoteStreams(prev => {
+        const copy = { ...prev };
+        for (const k of Object.keys(copy)) {
+          if (copy[k].role !== 'teacher') {
+            copy[k] = { ...copy[k], isMuted: true, version: Date.now() };
+          }
+        }
+        return copy;
+      });
+    } else if (action === 'unmute-all') {
+      setUserNotice('Unmute command sent to all students.');
+      setRemoteStreams(prev => {
+        const copy = { ...prev };
+        for (const k of Object.keys(copy)) {
+          if (copy[k].role !== 'teacher') {
+            copy[k] = { ...copy[k], isMuted: false, version: Date.now() };
+          }
+        }
+        return copy;
+      });
+    } else if (action === 'stop-all-video') {
+      setUserNotice('All student cameras turned off.');
+      setRemoteStreams(prev => {
+        const copy = { ...prev };
+        for (const k of Object.keys(copy)) {
+          if (copy[k].role !== 'teacher') {
+            copy[k] = { ...copy[k], videoOff: true, version: Date.now() };
+          }
+        }
+        return copy;
+      });
+    } else if (action === 'enable-all-video') {
+      setUserNotice('Camera turn-on request sent to all students.');
+      setRemoteStreams(prev => {
+        const copy = { ...prev };
+        for (const k of Object.keys(copy)) {
+          if (copy[k].role !== 'teacher') {
+            copy[k] = { ...copy[k], videoOff: false, version: Date.now() };
+          }
+        }
+        return copy;
+      });
+    } else if (action === 'mute-audio' && targetId) {
+      setRemoteStreams(prev => {
+        if (!prev[targetId]) return prev;
+        return {
+          ...prev,
+          [targetId]: { ...prev[targetId], isMuted: true, version: Date.now() }
+        };
+      });
+      setUserNotice('Student microphone muted.');
+    } else if (action === 'unmute-audio' && targetId) {
+      setRemoteStreams(prev => {
+        if (!prev[targetId]) return prev;
+        return {
+          ...prev,
+          [targetId]: { ...prev[targetId], isMuted: false, version: Date.now() }
+        };
+      });
+      setUserNotice('Student unmuted to ask doubt.');
+    }
+
+    // 2. Broadcast signaling message to student peers
     try {
       await api.sendOnlineClassSignal(classId, {
         to: targetId || 'all',
@@ -1052,6 +1181,34 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
   const totalStudentPages = Math.max(1, Math.ceil(studentPeers.length / 16));
   const currentStudents = studentPeers.slice(teacherGridPage * 16, (teacherGridPage + 1) * 16);
 
+  // Dynamic Auto-Fit Grid Calculations (1 student fills 100%, 2 fills 50% each, etc.)
+  const studentCount = currentStudents.length;
+  let gridCols = 1;
+  let gridRows = 1;
+
+  if (studentCount <= 1) {
+    gridCols = 1;
+    gridRows = 1;
+  } else if (studentCount === 2) {
+    gridCols = 2;
+    gridRows = 1;
+  } else if (studentCount <= 4) {
+    gridCols = 2;
+    gridRows = 2;
+  } else if (studentCount <= 6) {
+    gridCols = 3;
+    gridRows = 2;
+  } else if (studentCount <= 9) {
+    gridCols = 3;
+    gridRows = 3;
+  } else if (studentCount <= 12) {
+    gridCols = 4;
+    gridRows = 3;
+  } else {
+    gridCols = 4;
+    gridRows = 4;
+  }
+
   return (
     <div
       ref={roomContainerRef}
@@ -1118,8 +1275,8 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
           {/* Teacher: Connected count & Global Controls */}
           {isTeacher && (
-            <div className="flex items-center gap-1.5">
-              <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#071b34] border border-[#133966] text-xs font-bold text-cyan-300">
                 <Users className="w-3.5 h-3.5 text-[#00C49F]" />
                 <span>{participantsList.length} Connected</span>
               </div>
@@ -1127,26 +1284,26 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
               {/* Mute All / Unmute All */}
               <button
                 onClick={() => handleRemoteControl('all', 'mute-all')}
-                className="px-2.5 py-1 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1 shadow-sm transition-all"
+                className="px-2.5 py-1 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Mute all students' microphones"
               >
                 <MicOff className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Mute All</span>
+                <span>Mute All</span>
               </button>
 
               <button
                 onClick={() => handleRemoteControl('all', 'unmute-all')}
-                className="px-2.5 py-1 rounded-xl bg-[#00a896]/20 hover:bg-[#00a896]/30 border border-[#00a896]/40 text-[#00C49F] text-xs font-bold flex items-center gap-1 shadow-sm transition-all"
+                className="px-2.5 py-1 rounded-xl bg-[#00a896]/20 hover:bg-[#00a896]/30 border border-[#00a896]/40 text-[#00C49F] text-xs font-bold flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Unmute all students' microphones"
               >
                 <Mic className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">Unmute All</span>
+                <span>Unmute All</span>
               </button>
 
               {/* Video Off All / Enable All Video */}
               <button
                 onClick={() => handleRemoteControl('all', 'stop-all-video')}
-                className="hidden lg:flex px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold items-center gap-1"
+                className="flex px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Turn off all students' video"
               >
                 <VideoOff className="w-3.5 h-3.5" />
@@ -1155,7 +1312,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
 
               <button
                 onClick={() => handleRemoteControl('all', 'enable-all-video')}
-                className="hidden lg:flex px-2 py-1 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] text-xs font-bold items-center gap-1"
+                className="flex px-2 py-1 rounded-xl bg-[#071b34] hover:bg-[#0b2444] border border-[#133966] text-[#00C49F] text-xs font-bold items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
                 title="Enable all students' video"
               >
                 <Video className="w-3.5 h-3.5" />
@@ -1167,7 +1324,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           {/* Fullscreen Button */}
           <button
             onClick={toggleFullscreen}
-            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#071b34] border border-transparent hover:border-[#133966] transition-all"
+            className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-[#071b34] border border-transparent hover:border-[#133966] transition-all cursor-pointer"
             title="Toggle Fullscreen"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -1202,7 +1359,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                 handleRemoteControl(handRaiseNotification.studentId, 'unmute-audio');
                 setHandRaiseNotification(null);
               }}
-              className="px-3 py-1 bg-[#040d1a] hover:bg-black text-[#00C49F] font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1"
+              className="px-3 py-1 bg-[#040d1a] hover:bg-black text-[#00C49F] font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-1 cursor-pointer"
             >
               <Mic className="w-3.5 h-3.5 text-[#00C49F]" />
               <span>Unmute to Ask Doubts</span>
@@ -1212,7 +1369,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                 lowerStudentHand(handRaiseNotification.studentId);
                 setHandRaiseNotification(null);
               }}
-              className="p-1 text-slate-900 hover:text-black rounded-lg"
+              className="p-1 text-slate-900 hover:text-black rounded-lg cursor-pointer"
               title="Dismiss"
             >
               <X className="w-4 h-4" />
@@ -1220,11 +1377,11 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
           </div>
         )}
 
-        {/* User Notification Pill (for student when muted/unmuted) */}
-        {!isTeacher && userNotice && (
+        {/* User Notification Pill for BOTH teacher and students */}
+        {userNotice && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 text-cyan-300 px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 border border-[#00C49F] text-xs font-bold animate-in fade-in duration-200">
             <span>{userNotice}</span>
-            <button onClick={() => setUserNotice('')} className="p-1 text-slate-400 hover:text-white">
+            <button onClick={() => setUserNotice('')} className="p-1 text-slate-400 hover:text-white cursor-pointer">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -1242,7 +1399,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-[#00C49F]" />
-                    Students Monitor (4 Columns × 4 Rows)
+                    {studentCount === 1 ? 'Student Live Video (Full Stage)' : `Students Monitor (${studentCount} Views)`}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 text-[10px] font-mono font-bold">
                     {studentPeers.length} Active
@@ -1261,7 +1418,7 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                             : 'text-slate-400 hover:text-white'
                         }`}
                       >
-                        4×4 Grid
+                        Student Grid
                       </button>
                       <button
                         onClick={() => setTeacherViewMode('screen')}
@@ -1301,19 +1458,19 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                     </div>
                   )}
 
-                  {/* Dedicated Fullscreen Button for Teacher's 4x4 Grid */}
+                  {/* Dedicated Fullscreen Button */}
                   <button
                     onClick={toggleFullscreen}
-                    className="px-2.5 py-1 rounded-xl bg-[#040d1a] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
-                    title="Toggle Fullscreen 4x4 Grid"
+                    className="px-2.5 py-1 rounded-xl bg-[#040d1a] hover:bg-[#0b2444] border border-[#133966] hover:border-[#00C49F] text-[#00C49F] text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                    title="Toggle Fullscreen"
                   >
                     {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                    <span className="hidden sm:inline">{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (4×4)'}</span>
+                    <span className="hidden sm:inline">{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
                   </button>
                 </div>
               </div>
 
-              {/* Grid Body: Teacher Screen Share OR 4 Rows × 4 Columns Students Grid */}
+              {/* Grid Body: Teacher Screen Share OR Dynamic Responsive Students Grid */}
               {isScreenSharing && teacherViewMode === 'screen' ? (
                 <div className="flex-1 w-full relative bg-black flex items-center justify-center min-h-0">
                   <video
@@ -1334,45 +1491,38 @@ export default function OnlineClassRoom({ classId, user, onLeave, onClassEnded }
                     <span>Presenting Your Screen</span>
                   </div>
                 </div>
+              ) : currentStudents.length === 0 ? (
+                /* No students connected yet: Waiting Room */
+                <div className="flex-1 w-full h-full flex flex-col items-center justify-center p-6 text-center bg-[#020813]">
+                  <div className="w-16 h-16 rounded-2xl bg-[#071b34] border border-[#133966] flex items-center justify-center text-[#00C49F] mb-3 animate-pulse">
+                    <Users className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-white">Live Classroom Ready</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mt-1">
+                    Waiting for students of Division {classInfo?.division || 'A'} to join. Once joined, video will immediately fill the screen.
+                  </p>
+                </div>
               ) : (
-                /* The 4 Columns and 4 Rows Grid */
+                /* Dynamic Responsive Student Grid: 1 student fills 100%, 2 fills 50% each, etc. */
                 <div
-                  className="flex-1 min-h-0 w-full p-1.5 sm:p-2 grid grid-cols-4 grid-rows-4 gap-1.5 sm:gap-2 overflow-hidden bg-[#020813]"
+                  className="flex-1 min-h-0 w-full p-1.5 sm:p-2 grid gap-1.5 sm:gap-2 overflow-hidden bg-[#020813]"
                   style={{
-                    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-                    gridTemplateRows: 'repeat(4, minmax(0, 1fr))'
+                    gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+                    gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))`
                   }}
                 >
-                  {Array.from({ length: 16 }).map((_, idx) => {
-                    const studentItem = currentStudents[idx];
-                    if (studentItem) {
-                      const [peerId, remote] = studentItem;
-                      return (
-                        <div key={peerId} className="w-full h-full min-h-0 min-w-0 overflow-hidden">
-                          <RemoteVideoTile
-                            peerId={peerId}
-                            remote={remote}
-                            raisedHands={raisedHands}
-                            isMainStage={false}
-                            isTeacher={true}
-                            onRemoteControl={handleRemoteControl}
-                          />
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={`empty-desk-${idx}`}
-                        className="w-full h-full min-h-0 min-w-0 rounded-xl bg-[#040d1a]/50 border border-[#133966]/30 flex flex-col items-center justify-center text-slate-600 p-1 select-none"
-                      >
-                        <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 opacity-20 text-slate-500 mb-0.5" />
-                        <span className="text-[8px] sm:text-[9px] font-mono opacity-30">
-                          Desk {idx + 1 + teacherGridPage * 16}
-                        </span>
-                      </div>
-                    );
-                  })}
+                  {currentStudents.map(([peerId, remote]) => (
+                    <div key={peerId} className="w-full h-full min-h-0 min-w-0 overflow-hidden rounded-2xl">
+                      <RemoteVideoTile
+                        peerId={peerId}
+                        remote={remote}
+                        raisedHands={raisedHands}
+                        isMainStage={currentStudents.length === 1}
+                        isTeacher={true}
+                        onRemoteControl={handleRemoteControl}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
 

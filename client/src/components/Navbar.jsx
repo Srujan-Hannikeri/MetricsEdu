@@ -139,9 +139,14 @@ export default function Navbar({ user, onLogout, onOpenFeedback, onToggleMobileM
               <span className="whitespace-nowrap text-lg sm:text-2xl font-black tracking-tight text-white">
                 Metrics<span className="text-[#00C49F]">Edu</span>
               </span>
-              <span className="hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase tracking-wider">
+              <button
+                type="button"
+                onClick={() => { window.location.href = '/developer'; }}
+                className="hidden sm:inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00a896]/20 text-[#00C49F] border border-[#00a896]/40 uppercase tracking-wider hover:bg-[#00a896]/40 hover:border-[#00C49F] transition-all cursor-pointer"
+                title="Click or press Ctrl+Shift+D to open Developer Console"
+              >
                 Vision AI
-              </span>
+              </button>
             </div>
             <p className="hidden sm:block truncate text-xs text-cyan-200/80 font-medium tracking-wide">
               One Connected Platform. One Smart Classroom.

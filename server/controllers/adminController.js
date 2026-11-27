@@ -162,6 +162,116 @@ function checkTeacherBreakViolation(newSlotStr, existingSlots, teacherName) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  TIMETABLE COLLISION SANITIZER (Auto-resolves existing teacher overlaps)
+// ═══════════════════════════════════════════════════════════════════
+
+async function sanitizeTimetableTeacherCollisions(tenantAdminId, instType) {
+  try {
+    const instFilter = getInstitutionTypeFilter(instType);
+    const allSlots = await Timetable.find({
+      institutionType: instFilter
+    }).populate('course', 'code title semester standard pucYear branch').populate('teacher', 'name');
+
+    const teacherMap = new Map();
+    for (const slot of allSlots) {
+      const tid = (slot.teacher?._id || slot.teacher)?.toString();
+      if (!tid) continue;
+      if (!teacherMap.has(tid)) teacherMap.set(tid, []);
+      teacherMap.get(tid).push(slot);
+    }
+
+    const standardSlots = [
+      { slot: '08:30 AM - 09:25 AM', start: 510, end: 565 },
+      { slot: '09:25 AM - 10:20 AM', start: 565, end: 620 },
+      { slot: '10:50 AM - 11:45 AM', start: 650, end: 705 },
+      { slot: '11:45 AM - 12:40 PM', start: 705, end: 760 },
+      { slot: '01:30 PM - 03:30 PM', start: 810, end: 930 }
+    ];
+
+    for (const [tid, tSlots] of teacherMap.entries()) {
+      const dayMap = {};
+      for (const s of tSlots) {
+        if (!dayMap[s.day]) dayMap[s.day] = [];
+        dayMap[s.day].push(s);
+      }
+
+      for (const day of Object.keys(dayMap)) {
+        const slotsOnDay = dayMap[day];
+        slotsOnDay.sort((a, b) => (a.startMinutes || 0) - (b.startMinutes || 0));
+
+        for (let i = 0; i < slotsOnDay.length; i++) {
+          for (let j = i + 1; j < slotsOnDay.length; j++) {
+            const s1 = slotsOnDay[i];
+            const s2 = slotsOnDay[j];
+
+            const times1 = parseSlotTimes(s1.timeSlot) || { start: s1.startMinutes, end: s1.endMinutes };
+            const times2 = parseSlotTimes(s2.timeSlot) || { start: s2.startMinutes, end: s2.endMinutes };
+
+            const isOverlap = (s1.timeSlot && s2.timeSlot && s1.timeSlot.trim() === s2.timeSlot.trim()) ||
+              (times1 && times2 && times1.start < times2.end && times1.end > times2.start);
+
+            if (isOverlap) {
+              // We have a collision! s1 keeps its slot; s2 is relocated to a free slot on that day
+              const otherDivSlots = await Timetable.find({
+                day,
+                division: s2.division,
+                semester: s2.semester,
+                branch: s2.branch,
+                institutionType: instFilter,
+                _id: { $ne: s2._id }
+              });
+
+              const allTeacherSlotsOnDay = await Timetable.find({
+                day,
+                teacher: tid,
+                institutionType: instFilter,
+                _id: { $ne: s2._id }
+              });
+
+              let resolvedSlot = null;
+              for (const cand of standardSlots) {
+                const divBusy = otherDivSlots.some(os => os.timeSlot && os.timeSlot.trim() === cand.slot.trim());
+                if (divBusy) continue;
+
+                const teacherBusy = allTeacherSlotsOnDay.some(ts => {
+                  if (ts.timeSlot && ts.timeSlot.trim() === cand.slot.trim()) return true;
+                  const tTimes = parseSlotTimes(ts.timeSlot);
+                  return tTimes && cand.start < tTimes.end && cand.end > tTimes.start;
+                });
+                if (teacherBusy) continue;
+
+                const breakErr = checkTeacherBreakViolation(cand.slot, allTeacherSlotsOnDay, s2.teacher?.name || 'Teacher');
+                if (breakErr) continue;
+
+                resolvedSlot = cand;
+                break;
+              }
+
+              if (resolvedSlot) {
+                await Timetable.findByIdAndUpdate(s2._id, {
+                  timeSlot: resolvedSlot.slot,
+                  startMinutes: resolvedSlot.start,
+                  endMinutes: resolvedSlot.end
+                });
+                s2.timeSlot = resolvedSlot.slot;
+                s2.startMinutes = resolvedSlot.start;
+                s2.endMinutes = resolvedSlot.end;
+              } else {
+                await Timetable.findByIdAndDelete(s2._id);
+                slotsOnDay.splice(j, 1);
+                j--;
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Sanitize timetable collision warning:', err);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  TIMETABLE CRUD
 // ═══════════════════════════════════════════════════════════════════
 
@@ -169,14 +279,18 @@ exports.getTimetables = async (req, res) => {
   try {
     const { division, day, semester, branch, standard, institutionType, pucYear, pucDept } = req.query;
     const actorType = normalizeInstitutionType(req.user.institutionType || 'institute');
+    const tenantAdminId = getTenantAdminId(req.user);
+    if (!tenantAdminId) {
+      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
+    }
+
+    // Auto-clean any legacy teacher collisions
+    await sanitizeTimetableTeacherCollisions(tenantAdminId, actorType);
+
     const filter = { institutionType: getInstitutionTypeFilter(actorType) };
 
     if (institutionType && normalizeInstitutionType(institutionType) !== actorType) {
       return res.status(403).json({ success: false, message: 'Timetables are restricted to your institution.' });
-    }
-    const tenantAdminId = getTenantAdminId(req.user);
-    if (!tenantAdminId) {
-      return res.status(403).json({ success: false, message: 'Institution ownership is required.' });
     }
     const tenantCourseIds = await Course.find({ createdByAdmin: tenantAdminId }).distinct('_id');
     filter.course = { $in: tenantCourseIds };
@@ -959,6 +1073,9 @@ exports.autoGenerateTimetable = async (req, res) => {
     // ── Bulk insert ───────────────────────────────────────────────────────────
     await Timetable.insertMany(generatedSlots);
 
+    // Sanitize any potential collisions across all cohorts to guarantee 0 teacher clashes
+    await sanitizeTimetableTeacherCollisions(tenantAdminId, instType);
+
     const filter = {
       semester: targetSem,
       branch: targetBranch,
@@ -1410,6 +1527,9 @@ exports.getTeacherTimetable = async (req, res) => {
       institutionType: getInstitutionTypeFilter(actorType)
     });
     if (!teacher) return res.status(404).json({ success: false, message: 'Teacher not found in your institution.' });
+
+    // Auto-resolve any colliding slots for this teacher across all cohorts
+    await sanitizeTimetableTeacherCollisions(tenantAdminId, actorType);
 
     const departmentCourseFilter = {
       createdByAdmin: tenantAdminId,
