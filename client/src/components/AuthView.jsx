@@ -101,6 +101,7 @@ export default function AuthView({ onAuthSuccess }) {
   const [institutionType, setInstitutionType] = useState('institute');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sessionConflict, setSessionConflict] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
 
   // Form fields
@@ -143,13 +144,14 @@ export default function AuthView({ onAuthSuccess }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setSuccessMsg(''); setLoading(true);
+    setError(''); setSuccessMsg(''); setSessionConflict(false); setLoading(true);
     try {
       if (mode === 'login') {
         const idToSubmit = identifier.trim() || email.trim();
         if (!idToSubmit || !password) throw new Error('Please provide identifier and password');
         const data = await api.login(idToSubmit, password, selectedRole);
         setToken(data.token);
+        setSessionConflict(false);
         setSuccessMsg('Login successful! Loading your dashboard...');
         setTimeout(() => onAuthSuccess(data.user), 300);
       } else {
@@ -191,11 +193,34 @@ export default function AuthView({ onAuthSuccess }) {
 
         const data = await api.register(payload);
         setToken(data.token);
+        setSessionConflict(false);
         setSuccessMsg('Account created! Welcome to MetricsEdu.');
         setTimeout(() => onAuthSuccess(data.user), 500);
       }
     } catch (err) {
-      setError(err.message || 'Authentication failed.');
+      if (err.sessionConflict || err.status === 409) {
+        setSessionConflict(true);
+        setError('This account is currently active on another device. Logout from old device and login here.');
+      } else {
+        setSessionConflict(false);
+        setError(err.message || 'Authentication failed.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForceLogin = async () => {
+    setError(''); setSuccessMsg(''); setLoading(true);
+    try {
+      const idToSubmit = identifier.trim() || email.trim();
+      const data = await api.login(idToSubmit, password, selectedRole, true);
+      setToken(data.token);
+      setSessionConflict(false);
+      setSuccessMsg('Logged out from previous device. Loading your dashboard...');
+      setTimeout(() => onAuthSuccess(data.user), 300);
+    } catch (err) {
+      setError(err.message || 'Could not logout from previous device.');
     } finally {
       setLoading(false);
     }
@@ -358,11 +383,32 @@ export default function AuthView({ onAuthSuccess }) {
           </div>
 
           {/* Error / success */}
-          {error && (
+          {sessionConflict ? (
+            <div className="p-4 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs space-y-3 animate-fade-in shadow-lg shadow-amber-950/30">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-amber-300 text-xs sm:text-sm">Active Session on Another Device</p>
+                  <p className="text-amber-200/90 text-xs mt-1 leading-relaxed">
+                    This account is currently active on another device or browser. To access your account here, logout from old device and login here.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleForceLogin}
+                disabled={loading}
+                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>Logout from old device and login here</span>
+              </button>
+            </div>
+          ) : error ? (
             <div className="p-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />{error}
             </div>
-          )}
+          ) : null}
           {successMsg && (
             <div className="p-3 rounded-xl bg-[#00a896]/15 border border-[#00a896]/30 text-[#67e8f9] text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0" />{successMsg}
@@ -385,7 +431,7 @@ export default function AuthView({ onAuthSuccess }) {
                 <label className="text-xs font-semibold text-slate-300 mb-1 block">
                   {selectedRole === 'admin' ? 'Admin ID' : selectedRole === 'teacher' ? 'Teacher ID' : 'Student USN / Roll No'}
                 </label>
-                <input value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder="Enter your ID"
+                <input value={identifier} onChange={e => { setIdentifier(e.target.value); if (sessionConflict) setSessionConflict(false); }} placeholder="Enter your ID"
                   className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-[#00a896]" />
               </div>
             ) : (
@@ -436,7 +482,7 @@ export default function AuthView({ onAuthSuccess }) {
             {/* Password */}
             <div>
               <label className="text-xs font-semibold text-slate-300 mb-1 block">Password *</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••"
+              <input type="password" value={password} onChange={e => { setPassword(e.target.value); if (sessionConflict) setSessionConflict(false); }} required placeholder="••••••••"
                 className="w-full bg-[#040d1a] border border-[#133966] rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#00a896]" />
               {mode === 'login' && (
                 <button type="button" onClick={() => setShowForgotModal(true)} className="text-[10px] text-[#00C49F] hover:underline mt-1">Forgot password?</button>

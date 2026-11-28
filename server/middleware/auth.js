@@ -21,6 +21,21 @@ const requireAuth = async (req, res, next) => {
     if (!user || !user.isActive) {
       return res.status(401).json({ success: false, message: 'Invalid or inactive account.' });
     }
+
+    // Single active session enforcement / concurrent login prevention
+    const sessionMismatch = user.currentSessionId
+      ? payload.sessionId !== user.currentSessionId
+      : Boolean(payload.sessionId);
+
+    if (sessionMismatch) {
+      return res.status(401).json({
+        success: false,
+        concurrentLogin: true,
+        sessionExpired: true,
+        message: 'This account was logged in from another device. Please logout from old device and login here.'
+      });
+    }
+
     req.user = user;
     return next();
   } catch (error) {

@@ -154,6 +154,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // Single active session identifier to prevent concurrent logins
+  currentSessionId: {
+    type: String,
+    default: null
+  },
   createdAt: {
     type: Date,
     default: Date.now

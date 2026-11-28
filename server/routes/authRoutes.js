@@ -10,7 +10,8 @@ router.post('/forgot-password', authController.forgotPassword);
 router.post('/verify-otp', authController.verifyResetOTP);
 router.post('/reset-password', authController.resetPassword);
 
-// Protected Auth check
+// Protected Auth routes
 router.get('/me', requireAuth, authController.getMe);
+router.post('/logout', requireAuth, authController.logout);
 
 module.exports = router;

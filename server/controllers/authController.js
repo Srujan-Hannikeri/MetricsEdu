@@ -8,7 +8,7 @@ const {
   normalizeInstitutionType
 } = require('../config/institutions');
 
-const generateToken = (user) => {
+const generateToken = (user, sessionId = null) => {
   if (!process.env.JWT_SECRET) {
     throw new Error('JWT_SECRET is required to issue authentication tokens.');
   }
@@ -19,7 +19,8 @@ const generateToken = (user) => {
       email: user.email,
       name: user.name,
       identifier: user.adminId || user.teacherId || user.usn,
-      institutionType: user.institutionType || 'institute'
+      institutionType: user.institutionType || 'institute',
+      sessionId: sessionId || user.currentSessionId || null
     },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
@@ -245,10 +246,12 @@ exports.register = async (req, res) => {
       userData.division = userData.section;
     }
 
+    const sessionId = crypto.randomUUID();
+    userData.currentSessionId = sessionId;
     const newUser = new User(userData);
     await newUser.save();
 
-    const token = generateToken(newUser);
+    const token = generateToken(newUser, sessionId);
 
     return res.status(201).json({
       success: true,
@@ -276,6 +279,7 @@ exports.login = async (req, res) => {
     const identifier = String(req.body.identifier || '').trim();
     const password = req.body.password;
     const role = req.body.role;
+    const forceLogout = Boolean(req.body.forceLogout);
     if (!identifier || !password) {
       return res.status(400).json({ success: false, message: 'Identifier and password are required.' });
     }
@@ -298,10 +302,24 @@ exports.login = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Account is deactivated. Contact Admin.' });
     }
 
+    // Check if account already has an active session on another device
+    if (user.currentSessionId && !forceLogout) {
+      return res.status(409).json({
+        success: false,
+        sessionConflict: true,
+        message: 'This account is currently active on another device. Please logout from old device and login here.'
+      });
+    }
+
+    // Generate fresh session ID to enforce single active login per account
+    const sessionId = crypto.randomUUID();
+    user.currentSessionId = sessionId;
+    await User.findByIdAndUpdate(user._id, { currentSessionId: sessionId });
+
     return res.status(200).json({
       success: true,
       message: 'Logged in successfully',
-      token: generateToken(user),
+      token: generateToken(user, sessionId),
       user: user.toSafeObject()
     });
   } catch (error) {
@@ -474,5 +492,17 @@ exports.resetPassword = async (req, res) => {
   } catch (error) {
     console.error('resetPassword error:', error);
     return res.status(500).json({ success: false, message: error.message || 'Error resetting password.' });
+  }
+};
+
+// Logout: invalidate current active session
+exports.logout = async (req, res) => {
+  try {
+    if (req.user && req.user._id) {
+      await User.findByIdAndUpdate(req.user._id, { currentSessionId: null });
+    }
+    return res.status(200).json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

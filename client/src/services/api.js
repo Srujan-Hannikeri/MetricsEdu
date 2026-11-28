@@ -37,10 +37,29 @@ export async function request(endpoint, options = {}) {
   const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      if (data.concurrentLogin || data.sessionExpired) {
+        removeToken();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('metricsedu:concurrent-logout', {
+              detail: {
+                message: data.message || 'This account was logged in from another device. Please logout from old device and login here.'
+              }
+            })
+          );
+        }
+      }
+    }
     const message = data.message || (response.status === 404
       ? 'API route not found. Restart the backend server to load the latest routes.'
       : `Request failed with status ${response.status}`);
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = response.status;
+    err.concurrentLogin = !!data.concurrentLogin;
+    err.sessionConflict = !!data.sessionConflict;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -49,7 +68,9 @@ export const api = {
   uploadBlob,
   // ─── Auth ──────────────────────────────────────────────────────────────────
   register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
-  login: (identifier, password, role) => request('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, role }) }),
+  login: (identifier, password, role, forceLogout = false) =>
+    request('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password, role, forceLogout }) }),
+  logout: () => request('/auth/logout', { method: 'POST' }).catch(() => {}),
   forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
   verifyResetOTP: (email, otp) => request('/auth/verify-otp', { method: 'POST', body: JSON.stringify({ email, otp }) }),
   resetPassword: (email, otp, newPassword) => request('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email, otp, newPassword }) }),
